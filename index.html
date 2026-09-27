@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Bergs Dialect Quiz</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#111111">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    overflow: hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #111;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+  .zone {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #fff;
+    user-select: none;
+    touch-action: manipulation;
+    transition: opacity .25s ease, filter .25s ease;
+    padding: 1rem;
+  }
+  .zone.red { background: #b23127; }
+  .zone.green { background: #1e8a4c; }
+  .zone.inactive { opacity: .3; filter: grayscale(40%); pointer-events: none; }
+  .zone .zone-label { font-size: 1.3rem; line-height: 1.4; max-width: 90%; font-weight: 600; }
+
+  #controlStrip {
+    flex: 0 0 auto;
+    background: #1c1c1c;
+    color: #eee;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .5rem calc(.5rem + env(safe-area-inset-right, 0px)) .5rem calc(.5rem + env(safe-area-inset-left, 0px));
+    min-height: 56px;
+    flex-wrap: wrap;
+  }
+  #controlStrip button {
+    background: #333; color: #eee; border: 1px solid #555; border-radius: 6px;
+    padding: .5rem .75rem; font-size: .95rem; cursor: pointer;
+  }
+  #controlStrip button:active { background: #444; }
+  #controlStrip button:disabled { opacity: .4; cursor: not-allowed; }
+  #controlStrip button[hidden] { display: none; }
+  #statusText { flex: 1 1 auto; text-align: center; font-size: .95rem; min-width: 120px; }
+
+  #topOverlay {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: .25rem .5rem;
+    padding-top: calc(.25rem + env(safe-area-inset-top, 0px));
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,.6);
+    z-index: 5;
+  }
+  #scoreOverview {
+    font-size: .7rem;
+    color: rgba(255,255,255,.75);
+    text-align: center;
+  }
+  #cacheProgressWrap { margin-top: .3rem; }
+  #cacheProgressWrap[hidden] { display: none; }
+  #cacheProgressText {
+    font-size: .65rem;
+    color: rgba(255,255,255,.85);
+    text-align: center;
+    margin-bottom: .15rem;
+  }
+  #cacheProgressBar {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,.2);
+    overflow: hidden;
+  }
+  #cacheProgressFill {
+    height: 100%;
+    width: 0%;
+    background: #3a8;
+    transition: width .2s ease;
+  }
+
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 20; padding: 1rem;
+  }
+  .modal.hidden { display: none; }
+  .modal-content {
+    background: #1c1c1c; color: #eee; border-radius: 10px;
+    padding: 1.25rem; max-width: 420px; width: 100%;
+    max-height: 85vh; overflow-y: auto;
+  }
+  .modal-content h2 { margin-top: 0; font-size: 1.1rem; }
+  .field-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+  .field-row input[type=number] {
+    width: 4.5rem; padding: .4rem; border-radius: 6px; border: 1px solid #555;
+    background: #111; color: #eee; font-size: 1rem;
+  }
+  .modal-content > button { margin-top: 1rem; width: 100%; padding: .6rem; }
+  #swWarning {
+    font-size: .8rem; color: #f0a04b; margin-top: .75rem;
+  }
+  #swWarning:empty { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topOverlay">
+    <div id="scoreOverview">Laden…</div>
+    <div id="cacheProgressWrap" hidden>
+      <div id="cacheProgressText"></div>
+      <div id="cacheProgressBar"><div id="cacheProgressFill"></div></div>
+    </div>
+  </div>
+  <div id="redZone" class="zone red"><div class="zone-label">NIET GEKEND</div></div>
+  <div id="controlStrip">
+    <button id="settingsBtn" title="Instellingen">⚙</button>
+    <button id="startBtn" disabled>Laden…</button>
+    <button id="replayBtn" title="Woord opnieuw afspelen" disabled>🔁</button>
+    <div id="statusText">Woorden worden geladen…</div>
+    <button id="installBtn" hidden>📲 Installeer app</button>
+  </div>
+  <div id="greenZone" class="zone green"><div class="zone-label">GEKEND</div></div>
+</div>
+
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Instellingen</h2>
+    <div class="field-row">
+      <label for="pauseInput">Pauze tussen woorden (seconden):</label>
+      <input id="pauseInput" type="number" min="0" max="10" step="1" value="1">
+    </div>
+    <button id="resetProgressBtn">Voortgang wissen (alle woorden opnieuw "niet gekend")</button>
+    <div id="swWarning"></div>
+    <button id="closeSettingsBtn">Sluiten</button>
+  </div>
+</div>
+
+<audio id="player" preload="none"></audio>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // Persistente state
+  // ---------------------------------------------------------------------
+  const STORAGE_KEY = "bergs_quiz_state_v1";
+
+  function loadStored() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return {};
+      return JSON.parse(raw);
+    } catch (e) {
+      return {};
+    }
+  }
+
+  const stored = loadStored();
+
+  const state = {
+    pauseMs: (stored.pauseMs != null ? stored.pauseMs : 1000),
+    lastResults: stored.lastResults || {},        // wordId -> 'gekend' | 'niet'
+    lastRoundCounts: stored.lastRoundCounts || null, // { gekend, niet }
+    phase: "idle",       // idle | answering | summary
+    queue: [],
+    queueIndex: -1,
+    currentWord: null,
+    roundCounts: { gekend: 0, niet: 0 },
+    nextTimer: null,
+    session: 0,
+    running: false
+  };
+
+  let WORDS = [];
+
+  function saveState() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      pauseMs: state.pauseMs,
+      lastResults: state.lastResults,
+      lastRoundCounts: state.lastRoundCounts
+    }));
+  }
+
+  // ---------------------------------------------------------------------
+  // DOM
+  // ---------------------------------------------------------------------
+  const redZone = document.getElementById("redZone");
+  const greenZone = document.getElementById("greenZone");
+  const statusText = document.getElementById("statusText");
+  const startBtn = document.getElementById("startBtn");
+  const replayBtn = document.getElementById("replayBtn");
+  const installBtn = document.getElementById("installBtn");
+  const settingsBtn = document.getElementById("settingsBtn");
+  const scoreOverview = document.getElementById("scoreOverview");
+  const settingsModal = document.getElementById("settingsModal");
+  const closeSettingsBtn = document.getElementById("closeSettingsBtn");
+  const resetProgressBtn = document.getElementById("resetProgressBtn");
+  const pauseInput = document.getElementById("pauseInput");
+  const swWarning = document.getElementById("swWarning");
+  const player = document.getElementById("player");
+  const cacheProgressWrap = document.getElementById("cacheProgressWrap");
+  const cacheProgressText = document.getElementById("cacheProgressText");
+  const cacheProgressFill = document.getElementById("cacheProgressFill");
+
+  pauseInput.value = Math.round(state.pauseMs / 1000);
+
+  function updateScoreOverview() {
+    const total = WORDS.length;
+    if (state.lastRoundCounts) {
+      const c = state.lastRoundCounts;
+      scoreOverview.textContent =
+        total + " woorden · vorige beurt: " + c.gekend + " gekend, " + c.niet + " niet gekend";
+    } else {
+      scoreOverview.textContent = total + " woorden · nog geen beurt gespeeld";
+    }
+  }
+
+  function setZonesActive(active) {
+    redZone.classList.toggle("inactive", !active);
+    greenZone.classList.toggle("inactive", !active);
+  }
+  setZonesActive(false);
+
+  // ---------------------------------------------------------------------
+  // Woorden laden
+  // ---------------------------------------------------------------------
+  fetch("words.json")
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      WORDS = data;
+      updateScoreOverview();
+      startBtn.disabled = false;
+      startBtn.textContent = "Start quiz";
+      statusText.textContent = "Start de quiz om te beginnen.";
+    })
+    .catch(function () {
+      statusText.textContent = "Kan words.json niet laden. Open deze app via het serve.js-adres, niet als los bestand.";
+      scoreOverview.textContent = "Niet geladen";
+    });
+
+  // ---------------------------------------------------------------------
+  // Service worker: zorgt voor echte offline werking
+  // ---------------------------------------------------------------------
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(function () {
+      swWarning.textContent = "Service worker kon niet geregistreerd worden — offline gebruik werkt hierdoor nog niet. Controleer de installatie-instructies (Chrome-vlag voor dit adres).";
+    });
+    navigator.serviceWorker.addEventListener("message", function (event) {
+      const msg = event.data;
+      if (!msg || msg.type !== "cache-progress") return;
+      if (!msg.total) return;
+      cacheProgressWrap.hidden = false;
+      const pct = Math.round((msg.done / msg.total) * 100);
+      cacheProgressFill.style.width = pct + "%";
+      if (msg.finished) {
+        cacheProgressText.textContent = "Klaar voor offline gebruik ✔ (" + msg.total + " woorden)";
+        setTimeout(function () { cacheProgressWrap.hidden = true; }, 4000);
+      } else {
+        cacheProgressText.textContent = "Offline voorbereiden: " + msg.done + " / " + msg.total;
+      }
+    });
+  } else {
+    swWarning.textContent = "Deze browser ondersteunt geen service workers — offline gebruik is niet mogelijk.";
+  }
+
+  let deferredInstallPrompt = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    installBtn.hidden = false;
+  });
+  installBtn.addEventListener("click", function () {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    deferredInstallPrompt.userChoice.then(function () {
+      deferredInstallPrompt = null;
+      installBtn.hidden = true;
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Geluid (Web Audio, geen bestanden nodig) — voor de ping/buzz tikjes
+  // ---------------------------------------------------------------------
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  function playTone(kind) {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+    if (kind === "ping") {
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } else if (kind === "buzz") {
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(150, now);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc.start(now);
+      osc.stop(now + 0.45);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Woordwachtrij: "niet gekend" komt vaker terug
+  // ---------------------------------------------------------------------
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+
+  function buildQueue() {
+    const list = [];
+    WORDS.forEach(function (word) {
+      list.push(word);
+      const last = state.lastResults[word.id];
+      if (last === "niet") { list.push(word); list.push(word); }
+    });
+    return shuffle(list);
+  }
+
+  // ---------------------------------------------------------------------
+  // Quiz flow
+  // ---------------------------------------------------------------------
+  function startQuiz() {
+    if (!WORDS.length || state.running) return;
+    state.running = true;
+    state.session += 1;
+    const session = state.session;
+    state.roundCounts = { gekend: 0, niet: 0 };
+    state.queue = buildQueue();
+    state.queueIndex = -1;
+    startBtn.textContent = "Stop quiz";
+    settingsBtn.disabled = true;
+    playNext(session);
+  }
+
+  function stopQuiz() {
+    state.running = false;
+    state.session += 1; // maakt alle nog lopende callbacks van deze sessie ongeldig
+    if (state.nextTimer) { clearTimeout(state.nextTimer); state.nextTimer = null; }
+    player.pause();
+    state.phase = "idle";
+    startBtn.textContent = "Start quiz";
+    settingsBtn.disabled = false;
+    replayBtn.disabled = true;
+    setZonesActive(false);
+    statusText.textContent = "Quiz gestopt. Start opnieuw wanneer je wil.";
+  }
+
+  function playCurrent() {
+    player.src = state.currentWord.file;
+    player.currentTime = 0;
+    player.play().catch(function () {
+      statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
+    });
+  }
+
+  function playNext(session) {
+    if (session !== state.session) return;
+    state.queueIndex += 1;
+    if (state.queueIndex >= state.queue.length) {
+      finishRound(session);
+      return;
+    }
+    state.currentWord = state.queue[state.queueIndex];
+    state.phase = "answering";
+    setZonesActive(true);
+    replayBtn.disabled = false;
+    statusText.textContent = "Kies zodra je het weet — hoeft niet te wachten tot het einde.";
+    playCurrent();
+  }
+
+  player.addEventListener("ended", function () {
+    if (state.phase !== "answering") return;
+    statusText.textContent = "Kende je dit woord? Tik rood of groen.";
+  });
+
+  function registerResult(result, session) {
+    if (session !== state.session) return;
+    if (state.phase !== "answering") return;
+    player.pause();
+    setZonesActive(false);
+    replayBtn.disabled = true;
+    if (result === "gekend") playTone("ping"); else playTone("buzz");
+
+    state.lastResults[state.currentWord.id] = result;
+    state.roundCounts[result] += 1;
+    saveState();
+
+    state.phase = "idle";
+    state.nextTimer = setTimeout(function () { playNext(session); }, state.pauseMs);
+  }
+
+  function finishRound(session) {
+    if (session !== state.session) return;
+    state.lastRoundCounts = {
+      gekend: state.roundCounts.gekend,
+      niet: state.roundCounts.niet
+    };
+    saveState();
+    updateScoreOverview();
+
+    const c = state.roundCounts;
+    statusText.textContent = "Beurt klaar: " + c.gekend + " gekend, " + c.niet + " niet gekend.";
+    startBtn.textContent = "Start quiz";
+    settingsBtn.disabled = false;
+    state.phase = "idle";
+    state.running = false;
+    setZonesActive(false);
+    replayBtn.disabled = true;
+  }
+
+  // ---------------------------------------------------------------------
+  // Events
+  // ---------------------------------------------------------------------
+  function handleZoneTap(result) {
+    if (state.phase === "answering") {
+      registerResult(result, state.session);
+    }
+  }
+
+  redZone.addEventListener("click", function () { handleZoneTap("niet"); });
+  greenZone.addEventListener("click", function () { handleZoneTap("gekend"); });
+
+  replayBtn.addEventListener("click", function () {
+    if (state.phase === "answering" && state.currentWord) playCurrent();
+  });
+
+  startBtn.addEventListener("click", function () {
+    if (!state.running) startQuiz();
+    else stopQuiz();
+  });
+
+  settingsBtn.addEventListener("click", function () {
+    settingsModal.classList.remove("hidden");
+  });
+  closeSettingsBtn.addEventListener("click", function () {
+    settingsModal.classList.add("hidden");
+  });
+
+  resetProgressBtn.addEventListener("click", function () {
+    state.lastResults = {};
+    state.lastRoundCounts = null;
+    saveState();
+    updateScoreOverview();
+    settingsModal.classList.add("hidden");
+  });
+
+  pauseInput.addEventListener("change", function () {
+    let val = parseInt(pauseInput.value, 10);
+    if (isNaN(val) || val < 0) val = 0;
+    if (val > 10) val = 10;
+    state.pauseMs = val * 1000;
+    pauseInput.value = val;
+    saveState();
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+Transcripties van de mp3's in de map "mp3"
+Automatisch gegenereerd met een lokaal spraakherkenningsmodel (Whisper large-v3, Nederlands).
+Elke transcriptie is meerdere keren onafhankelijk gecontroleerd (apart uitgesneden en
+opnieuw laten herkennen) om de letter-voor-letter spelling zo betrouwbaar mogelijk te
+krijgen — dat is voor spraakherkenning het lastigste onderdeel.
+
+Combined5.mp3
+  A je pin. Pinnig iemand.
+  Spelling: A-A-I-E-P-I-N
+  (3x onafhankelijk gecontroleerd, steeds identiek resultaat — betrouwbaar, maar de
+  volgorde "AAIEPIN" oogt ongebruikelijk; controleer zelf even of dit klopt.)
+
+Combined7.mp3
+  Aankomend. Aankomend.
+  Spelling: A-A-N-K-O-M-M-E-N-D
+  (2 van de 3 controles gaven deze 8e letter als E, 1 controle gaf A — die ene letter is
+  dus niet 100% zeker.)
+
+Combined9.mp3
+  Aanlaaien. Aankoeken, veel woorden.
+  Spelling: A-A-N-L-A-A-J-E
+  (in de eerste versie ontbrak de spelling — het model stopte per ongeluk te vroeg. Nu
+  apart uitgesneden en alsnog gevonden.)
+
+Combined47.mp3
+  Affeseerspons. Grote spons.
+  Spelling: A-F-F-E-S-E-E-R-S-P-O-N-S
+  (2x onafhankelijk gecontroleerd, identiek resultaat.)
+
+Combined49.mp3
+  Afleggertje. Stekje van een tuin- of kamerplant.
+  Spelling: A-F-L-E-G-G-E-R-T-J-E
+  (2x onafhankelijk gecontroleerd, identiek resultaat.)
+
+Combined51.mp3
+  Afleggers klaar. Doodmoe.
+  Spelling: A-F-L-E-G-G-E-S (spatie) K-L-A-A-R
+  (3x onafhankelijk gecontroleerd, steeds identiek. Let op: dit spelt "AFLEGGES", zonder
+  R vóór de S — dat wijkt af van het gesproken woord "Afleggers". Kan een dialect-
+  spelling zijn, kan ook een gemiste letter zijn; graag zelf verifiëren.)
+
+Combined53.mp3
+  Aflekken. Uitdruipen, aflekken van een bord of ongegeneerd zoenen in het openbaar.
+  Spelling: A-F-L-E-K-K-E
+  (in de eerste versie ontbrak de spelling — het model stopte per ongeluk te vroeg. Nu
+  apart uitgesneden en alsnog gevonden.)
+
+Combined55.mp3
+  Afbekken. Een pak slaag geven.
+  Spelling: A-F-E-K-K-E
+  (3x onafhankelijk gecontroleerd, steeds identiek. Let op: dit mist een B en een N t.o.v.
+  het gesproken woord "Afbekken" — graag zelf verifiëren, dit kan een genuine afwijkende
+  dialectspelling zijn maar het patroon is verdacht.)
+
+Combined57.mp3
+  Afpikken. Sterven, doodgaan.
+  Spelling: A-F-I-K-K-E
+  (3x onafhankelijk gecontroleerd, steeds identiek. Let op: dit mist een P en een N t.o.v.
+  het gesproken woord "Afpikken" — graag zelf verifiëren, zelfde soort afwijking als bij
+  Combined55.)

@@ -1,0 +1,69 @@
+Beschrijving: Bergs Dialect Quiz (Buzzerpaneel)
+
+Wat het is
+Een offline te gebruiken quiz-app voor je mobiel, gebouwd bovenop hetzelfde
+rood/groen buzzerpaneel-idee als de C#-quiz. In plaats van een voorgelezen
+vraag speelt de app een mp3-fragment af (spelling + betekenis van een Bergs
+dialectwoord). Gebouwd als PWA (installable web-app) zodat hij ook bij een
+kleine 4000 fragmenten nog soepel en volledig offline werkt.
+
+Hoe het werkt
+1. Start de quiz. Er speelt een willekeurig woord-fragment af.
+2. Je hoeft niet te wachten tot het einde: zodra je het weet, tik je meteen
+   rood (NIET GEKEND) of groen (GEKEND). Het fragment stopt dan direct.
+3. 🔁 speelt het huidige fragment nog eens af, ook tijdens het afspelen.
+4. Woorden die je als "niet gekend" markeert komen vaker terug in latere
+   beurten, zodat je vooral herhaalt wat je nog niet kent.
+5. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
+   Je voortgang wordt lokaal bewaard (blijft staan na het sluiten van de app).
+
+Techniek
+- De mp3's blijven gewone losse bestanden in de map "mp3" (niet ingebakken
+  in de HTML) — bij duizenden fragmenten zou dat één veel te groot bestand
+  opleveren.
+- Een service worker (sw.js) cachet bij de eerste keer opstarten alle
+  fragmenten op de telefoon zelf. Daarna werkt de app zonder enige
+  internetverbinding, ook als de pc/server niet meer aan staat.
+- "words.json" is de woordenlijst; wordt gegenereerd door build.js.
+
+Nieuwe mp3's toevoegen
+1. Zet de nieuwe mp3-bestanden in de map "mp3".
+2. Draai: node build.js
+   (dit herschrijft words.json en zet automatisch een nieuwe cache-versie
+   in sw.js, zodat de telefoon weet dat hij opnieuw moet cachen)
+3. Draai: node serve.js
+4. Open de app nog een keer op je telefoon terwijl die op hetzelfde wifi
+   zit als je pc — de voortgangsbalk verschijnt weer en download alles
+   (ook de ongewijzigde fragmenten) opnieuw naar de cache. Bij duizenden
+   bestanden op een lokaal wifi-netwerk is dat een kwestie van seconden.
+
+Eenmalige installatie op je Android-telefoon
+Service workers (nodig voor offline gebruik) werken standaard alleen op
+"https"-adressen of "localhost" — niet op een gewoon lokaal wifi-adres.
+Voor eigen, volledig lokaal gebruik zet je dat één keer handmatig aan:
+
+1. Op je pc, in deze map:
+     node build.js
+     node serve.js
+   Dit toont een adres als http://192.168.x.x:8080/ — noteer dit.
+2. Op je Android-telefoon, zelfde wifi als je pc, open Chrome en ga naar:
+     chrome://flags/#unsafely-treat-insecure-origin-as-secure
+   Zet deze vlag op "Enabled" en vul bij het tekstveld precies het adres
+   in van stap 1, zonder pad erachter (dus bv. http://192.168.1.23:8080).
+   Herstart Chrome via de knop die daarna onderin verschijnt.
+3. Open in Chrome het adres uit stap 1. De app laadt en begint direct met
+   "Offline voorbereiden: .../..." — wacht tot dit "Klaar voor offline
+   gebruik" toont.
+4. Tik op "📲 Installeer app" (of via het Chrome-menu ⋮ → "App
+   installeren"). Er verschijnt een icoon op je startscherm.
+5. Vanaf nu werkt de app via dat icoon, ook zonder wifi/internet en zonder
+   dat de pc/server nog aan hoeft te staan.
+
+Beperkingen
+- Deze installatiestap (de Chrome-vlag) werkt alleen op Android. Op een
+  iPhone is Safari hierin strikter; daarvoor is een echte https-bron nodig
+  (bv. gratis static hosting) in plaats van het eigen wifi-netwerk.
+- Bij het toevoegen van nieuwe mp3's wordt bij de volgende keer online
+  openen de hele woordenlijst opnieuw naar de cache gedownload (niet alleen
+  de nieuwe bestanden) — eenvoudig, en op een lokaal wifi-netwerk snel
+  genoeg, ook bij duizenden fragmenten.

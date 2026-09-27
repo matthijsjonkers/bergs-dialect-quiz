@@ -26,44 +26,53 @@ Techniek
   internetverbinding, ook als de pc/server niet meer aan staat.
 - "words.json" is de woordenlijst; wordt gegenereerd door build.js.
 
+Hosting
+De app staat online via GitHub Pages (gratis static hosting), zodat hij
+overal bereikbaar is — ongeacht of pc en telefoon op hetzelfde netwerk
+zitten:
+  Live url:  https://matthijsjonkers.github.io/bergs-dialect-quiz/
+  Repo:      https://github.com/matthijsjonkers/bergs-dialect-quiz (publiek)
+Publiek was nodig omdat GitHub Pages op een gratis account niet werkt met
+een privé-repo. De quiz-site zelf was toch al voor iedereen met de link
+bereikbaar; publiek betekent alleen dat ook de broncode op GitHub nu door
+anderen bekeken kan worden.
+
+Eenmalige installatie op je telefoon
+1. Open in Chrome (Android) of Safari (iPhone):
+     https://matthijsjonkers.github.io/bergs-dialect-quiz/
+   De app laadt en begint direct met "Offline voorbereiden: .../..." —
+   wacht tot dit "Klaar voor offline gebruik" toont.
+2. Tik op "📲 Installeer app" (Android/Chrome), of op iPhone: Deel-knop →
+   "Zet op beginscherm". Er verschijnt een icoon op je startscherm.
+3. Vanaf nu werkt de app via dat icoon, volledig offline — ook zonder
+   wifi/internet en zonder dat er een pc bij nodig is.
+
 Nieuwe mp3's toevoegen
 1. Zet de nieuwe mp3-bestanden in de map "mp3".
 2. Draai: node build.js
    (dit herschrijft words.json en zet automatisch een nieuwe cache-versie
    in sw.js, zodat de telefoon weet dat hij opnieuw moet cachen)
-3. Draai: node serve.js
-4. Open de app nog een keer op je telefoon terwijl die op hetzelfde wifi
-   zit als je pc — de voortgangsbalk verschijnt weer en download alles
-   (ook de ongewijzigde fragmenten) opnieuw naar de cache. Bij duizenden
-   bestanden op een lokaal wifi-netwerk is dat een kwestie van seconden.
+3. Commit en push naar GitHub:
+     git add -A
+     git commit -m "Nieuwe woorden toegevoegd"
+     git push
+   GitHub Pages bouwt de site binnen ongeveer een minuut opnieuw.
+4. Open de app nog een keer op je telefoon terwijl je internet hebt — de
+   voortgangsbalk verschijnt weer en download alles (ook de ongewijzigde
+   fragmenten) opnieuw naar de cache.
 
-Eenmalige installatie op je Android-telefoon
-Service workers (nodig voor offline gebruik) werken standaard alleen op
-"https"-adressen of "localhost" — niet op een gewoon lokaal wifi-adres.
-Voor eigen, volledig lokaal gebruik zet je dat één keer handmatig aan:
-
-1. Op je pc, in deze map:
-     node build.js
-     node serve.js
-   Dit toont een adres als http://192.168.x.x:8080/ — noteer dit.
-2. Op je Android-telefoon, zelfde wifi als je pc, open Chrome en ga naar:
-     chrome://flags/#unsafely-treat-insecure-origin-as-secure
-   Zet deze vlag op "Enabled" en vul bij het tekstveld precies het adres
-   in van stap 1, zonder pad erachter (dus bv. http://192.168.1.23:8080).
-   Herstart Chrome via de knop die daarna onderin verschijnt.
-3. Open in Chrome het adres uit stap 1. De app laadt en begint direct met
-   "Offline voorbereiden: .../..." — wacht tot dit "Klaar voor offline
-   gebruik" toont.
-4. Tik op "📲 Installeer app" (of via het Chrome-menu ⋮ → "App
-   installeren"). Er verschijnt een icoon op je startscherm.
-5. Vanaf nu werkt de app via dat icoon, ook zonder wifi/internet en zonder
-   dat de pc/server nog aan hoeft te staan.
+Lokaal testen zonder internet (optioneel)
+"serve.js" (node serve.js) start een lokale webserver voor als je liever
+zonder GitHub wil testen op je eigen wifi-netwerk. Let op: service workers
+werken dan alleen als telefoon én pc op hetzelfde wifi zitten, en op
+Android moet je bovendien handmatig chrome://flags/#unsafely-treat-insecure-origin-as-secure
+inschakelen voor dat lokale adres (niet nodig bij de GitHub Pages-versie
+hierboven, die heeft al echte https).
 
 Beperkingen
-- Deze installatiestap (de Chrome-vlag) werkt alleen op Android. Op een
-  iPhone is Safari hierin strikter; daarvoor is een echte https-bron nodig
-  (bv. gratis static hosting) in plaats van het eigen wifi-netwerk.
 - Bij het toevoegen van nieuwe mp3's wordt bij de volgende keer online
-  openen de hele woordenlijst opnieuw naar de cache gedownload (niet alleen
-  de nieuwe bestanden) — eenvoudig, en op een lokaal wifi-netwerk snel
-  genoeg, ook bij duizenden fragmenten.
+  openen de hele woordenlijst opnieuw naar de cache gedownload (niet
+  alleen de nieuwe bestanden) — eenvoudig, en snel genoeg ook bij
+  duizenden fragmenten.
+- De repo is publiek: broncode en bestandenlijst zijn zichtbaar voor
+  iedereen op GitHub.

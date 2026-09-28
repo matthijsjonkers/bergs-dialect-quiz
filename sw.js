@@ -17,7 +17,7 @@
 // mobiel, stopt de synchronisatie. Individuele mp3's die nog niet in de
 // cache zitten worden bij het afspelen ook nooit via mobiel netwerk
 // opgehaald.
-const CACHE_VERSION = "cfd4773fbc24-name2";
+const CACHE_VERSION = "cfd4773fbc24-icon4";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 

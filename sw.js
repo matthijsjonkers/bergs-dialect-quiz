@@ -5,7 +5,7 @@
 // CACHE_VERSION wordt door build.js automatisch vervangen door een hash
 // van words.json, zodat een nieuwe/gewijzigde woordenlijst vanzelf een
 // nieuwe cache-versie triggert (oude cache wordt in activate() opgeruimd).
-const CACHE_VERSION = "cfd4773fbc24";
+const CACHE_VERSION = "cfd4773fbc24-icon2";
 const CACHE_NAME = "bergs-quiz-" + CACHE_VERSION;
 
 const CORE_ASSETS = [

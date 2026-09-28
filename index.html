@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Bergs Dialect Quiz</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon/icon_192.png">
 <meta name="theme-color" content="#111111">
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -127,6 +127,7 @@
     <button id="replayBtn" title="Woord opnieuw afspelen" disabled>🔁</button>
     <div id="statusText">Woorden worden geladen…</div>
     <button id="installBtn" hidden>📲 Installeer app</button>
+    <button id="downloadMp3Btn" hidden>⬇️ Mp3's downloaden</button>
   </div>
   <div id="greenZone" class="zone green"><div class="zone-label">GEKEND</div></div>
 </div>
@@ -200,6 +201,7 @@
   const startBtn = document.getElementById("startBtn");
   const replayBtn = document.getElementById("replayBtn");
   const installBtn = document.getElementById("installBtn");
+  const downloadMp3Btn = document.getElementById("downloadMp3Btn");
   const settingsBtn = document.getElementById("settingsBtn");
   const scoreOverview = document.getElementById("scoreOverview");
   const settingsModal = document.getElementById("settingsModal");
@@ -254,6 +256,43 @@
   // ---------------------------------------------------------------------
   // Service worker: zorgt voor echte offline werking
   // ---------------------------------------------------------------------
+  // Mp3's mogen nooit via mobiel internet (4G/5G) gedownload worden,
+  // alleen via wifi — anders gaat dit ten koste van een beperkt databundel.
+  function getConnection() {
+    return navigator.connection || navigator.webkitConnection || navigator.mozConnection || null;
+  }
+
+  // true = bevestigd wifi, false = bevestigd mobiel, null = niet vast te stellen
+  // (browser ondersteunt de Network Information API niet).
+  function wifiStatus() {
+    const c = getConnection();
+    if (!c || !c.type) return null;
+    return c.type === "wifi";
+  }
+
+  function requestMp3Sync() {
+    navigator.serviceWorker.ready.then(function (reg) {
+      if (reg.active) reg.active.postMessage({ type: "sync-mp3s" });
+    });
+  }
+
+  function updateWifiUi() {
+    const status = wifiStatus();
+    if (status === true) {
+      downloadMp3Btn.hidden = true;
+      requestMp3Sync();
+    } else if (status === false) {
+      downloadMp3Btn.hidden = true;
+      cacheProgressWrap.hidden = false;
+      cacheProgressFill.style.width = "0%";
+      cacheProgressText.textContent = "Mobiel internet gedetecteerd — mp3's worden pas gedownload zodra er wifi is.";
+    } else {
+      // Kan niet vaststellen of dit wifi is: niet automatisch downloaden,
+      // gebruiker moet zelf bevestigen.
+      downloadMp3Btn.hidden = false;
+    }
+  }
+
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(function () {
       swWarning.textContent = "Service worker kon niet geregistreerd worden — offline gebruik werkt hierdoor nog niet. Controleer de installatie-instructies (Chrome-vlag voor dit adres).";
@@ -268,9 +307,25 @@
       if (msg.finished) {
         cacheProgressText.textContent = "Klaar voor offline gebruik ✔ (" + msg.total + " woorden)";
         setTimeout(function () { cacheProgressWrap.hidden = true; }, 4000);
+      } else if (msg.stoppedForCellular) {
+        cacheProgressText.textContent = "Gepauzeerd (" + msg.done + " / " + msg.total + ") — wifi verbroken, wacht tot wifi terug is.";
       } else {
         cacheProgressText.textContent = "Offline voorbereiden: " + msg.done + " / " + msg.total;
       }
+    });
+
+    navigator.serviceWorker.ready.then(function () {
+      updateWifiUi();
+    });
+
+    const connection = getConnection();
+    if (connection && connection.addEventListener) {
+      connection.addEventListener("change", updateWifiUi);
+    }
+
+    downloadMp3Btn.addEventListener("click", function () {
+      downloadMp3Btn.hidden = true;
+      requestMp3Sync();
     });
   } else {
     swWarning.textContent = "Deze browser ondersteunt geen service workers — offline gebruik is niet mogelijk.";

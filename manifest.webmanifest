@@ -1,6 +1,6 @@
 {
-  "name": "Bergs Dialect Quiz",
-  "short_name": "Bergs Quiz",
+  "name": "Dieje Lekt",
+  "short_name": "Dieje lekt",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

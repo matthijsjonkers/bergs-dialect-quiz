@@ -218,13 +218,14 @@
 
   function updateScoreOverview() {
     const total = WORDS.length;
-    if (state.lastRoundCounts) {
-      const c = state.lastRoundCounts;
-      scoreOverview.textContent =
-        total + " woorden · vorige beurt: " + c.gekend + " gekend, " + c.niet + " niet gekend";
-    } else {
-      scoreOverview.textContent = total + " woorden · nog geen beurt gespeeld";
-    }
+    let goed = 0, fout = 0;
+    Object.keys(state.lastResults).forEach(function (id) {
+      if (state.lastResults[id] === "gekend") goed += 1;
+      else if (state.lastResults[id] === "niet") fout += 1;
+    });
+    const ongeoefend = total - goed - fout;
+    scoreOverview.textContent =
+      total + " woorden · " + goed + " goed, " + fout + " fout, " + ongeoefend + " ongeoefend";
   }
 
   function setZonesActive(active) {
@@ -469,6 +470,7 @@
     state.lastResults[state.currentWord.id] = result;
     state.roundCounts[result] += 1;
     saveState();
+    updateScoreOverview();
 
     state.phase = "idle";
     state.nextTimer = setTimeout(function () { playNext(session); }, state.pauseMs);

@@ -157,6 +157,8 @@
   // Persistente state
   // ---------------------------------------------------------------------
   const STORAGE_KEY = "bergs_quiz_state_v1";
+  // Moet gelijk blijven aan MP3_CACHE_NAME in sw.js.
+  const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 
   function loadStored() {
     try {
@@ -467,15 +469,40 @@
     statusText.textContent = "Quiz gestopt. Start opnieuw wanneer je wil.";
   }
 
+  let currentBlobUrl = null;
+  function releaseBlobUrl() {
+    if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
+  }
+
+  // Leest een gecachet mp3-fragment zelf uit Cache Storage en speelt het af
+  // via een Blob-URL, in plaats van player.src rechtstreeks op de mp3-url
+  // te zetten. Directe <audio>-fetches lopen via het mediaelement zelf en
+  // worden op sommige Android/Chrome-versies niet betrouwbaar door de
+  // service worker opgevangen zodra er geen netwerk is — dit omzeilt dat.
+  function resolvePlayableSrc(file) {
+    if (!("caches" in window)) return Promise.resolve(file);
+    return caches.open(MP3_CACHE_NAME)
+      .then(function (cache) { return cache.match(file); })
+      .then(function (res) { return res ? res.blob() : null; })
+      .then(function (blob) { return blob ? URL.createObjectURL(blob) : file; })
+      .catch(function () { return file; });
+  }
+
   function playCurrent() {
-    player.src = state.currentWord.file;
-    player.currentTime = 0;
-    player.play().catch(function (err) {
-      if (err && err.name === "NotAllowedError") {
-        statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
-      } else {
-        statusText.textContent = "Dit fragment kon niet geladen worden (niet gedownload?). Open de app met wifi om te syncen.";
-      }
+    const word = state.currentWord;
+    resolvePlayableSrc(word.file).then(function (src) {
+      if (state.currentWord !== word) return; // ondertussen al doorgegaan naar een ander woord
+      releaseBlobUrl();
+      if (src.indexOf("blob:") === 0) currentBlobUrl = src;
+      player.src = src;
+      player.currentTime = 0;
+      player.play().catch(function (err) {
+        if (err && err.name === "NotAllowedError") {
+          statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
+        } else {
+          statusText.textContent = "Dit fragment kon niet geladen worden (niet gedownload?). Open de app met wifi om te syncen.";
+        }
+      });
     });
   }
 

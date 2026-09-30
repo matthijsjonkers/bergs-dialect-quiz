@@ -172,6 +172,7 @@
     pauseMs: (stored.pauseMs != null ? stored.pauseMs : 1000),
     lastResults: stored.lastResults || {},        // wordId -> 'gekend' | 'niet'
     lastRoundCounts: stored.lastRoundCounts || null, // { gekend, niet }
+    mp3sSyncedCount: stored.mp3sSyncedCount || 0, // aantal woorden waarvoor mp3's al volledig gedownload zijn
     phase: "idle",       // idle | answering | summary
     queue: [],
     queueIndex: -1,
@@ -188,7 +189,8 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       pauseMs: state.pauseMs,
       lastResults: state.lastResults,
-      lastRoundCounts: state.lastRoundCounts
+      lastRoundCounts: state.lastRoundCounts,
+      mp3sSyncedCount: state.mp3sSyncedCount
     }));
   }
 
@@ -248,6 +250,7 @@
       startBtn.disabled = false;
       startBtn.textContent = "Start quiz";
       statusText.textContent = "Start de quiz om te beginnen.";
+      updateWifiUi();
     })
     .catch(function () {
       statusText.textContent = "Kan words.json niet laden. Open deze app via het serve.js-adres, niet als los bestand.";
@@ -278,6 +281,14 @@
   }
 
   function updateWifiUi() {
+    if (!WORDS.length) return; // woordenlijst nog niet geladen, later opnieuw proberen
+    if (state.mp3sSyncedCount === WORDS.length) {
+      // Al eerder volledig gedownload voor deze woordenlijst — niet telkens
+      // opnieuw de wifi-status checken of de gebruiker lastigvallen.
+      downloadMp3Btn.hidden = true;
+      cacheProgressWrap.hidden = true;
+      return;
+    }
     const status = wifiStatus();
     if (status === true) {
       downloadMp3Btn.hidden = true;
@@ -308,6 +319,8 @@
       if (msg.finished) {
         cacheProgressText.textContent = "Klaar voor offline gebruik ✔ (" + msg.total + " woorden)";
         setTimeout(function () { cacheProgressWrap.hidden = true; }, 4000);
+        state.mp3sSyncedCount = msg.total;
+        saveState();
       } else if (msg.stoppedForCellular) {
         cacheProgressText.textContent = "Gepauzeerd (" + msg.done + " / " + msg.total + ") — wifi verbroken, wacht tot wifi terug is.";
       } else {

@@ -584,9 +584,13 @@
   });
 
   function updateDebugInfo() {
-    const status = wifiStatus();
-    const statusLabel = status === true ? "wifi (bevestigd)" : status === false ? "mobiel internet (bevestigd)" : "onbekend";
     const conn = getConnection();
+    const type = conn && conn.type;
+    const statusLabel =
+      type === "wifi" ? "wifi (bevestigd)" :
+      type === "none" ? "geen verbinding" :
+      type ? "mobiel internet (bevestigd)" :
+      "onbekend";
     debugInfo.textContent =
       "Woorden: " + WORDS.length + "\n" +
       "Mp3-sync voltooid voor: " + state.mp3sSyncedCount + " / " + WORDS.length + " woorden\n" +

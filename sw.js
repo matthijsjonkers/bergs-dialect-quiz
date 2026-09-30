@@ -17,7 +17,7 @@
 // mobiel, stopt de synchronisatie. Individuele mp3's die nog niet in de
 // cache zitten worden bij het afspelen ook nooit via mobiel netwerk
 // opgehaald.
-const CACHE_VERSION = "cfd4773fbc24-mp3sync2";
+const CACHE_VERSION = "cfd4773fbc24-mp3sync3";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 
@@ -98,16 +98,25 @@ async function syncMp3s() {
     const words = await wordsRes.json();
 
     let done = 0;
+    let failed = 0;
     let stoppedForCellular = false;
     const total = words.length;
     broadcast({ type: "cache-progress", done: 0, total: total, finished: false });
 
     await mapLimit(words, 6, async (word) => {
       if (!isWifiOk()) { stoppedForCellular = true; return; }
-      const already = await mp3Cache.match(word.file);
-      if (!already) {
-        const res = await fetch(word.file);
-        if (res.ok) await mp3Cache.put(word.file, res);
+      try {
+        const already = await mp3Cache.match(word.file);
+        if (!already) {
+          const res = await fetch(word.file);
+          if (res.ok) {
+            await mp3Cache.put(word.file, res);
+          } else {
+            failed++;
+          }
+        }
+      } catch (e) {
+        failed++;
       }
       done++;
       if (done % 10 === 0 || done === total) {
@@ -115,12 +124,16 @@ async function syncMp3s() {
       }
     });
 
+    // Alleen echt "klaar" als alles gelukt is — niet elk mislukt fragment
+    // stilletjes negeren, anders lijkt het net alsof offline gebruik werkt
+    // terwijl er losse woorden ontbreken in de cache.
     broadcast({
       type: "cache-progress",
       done: done,
       total: total,
-      finished: !stoppedForCellular,
-      stoppedForCellular: stoppedForCellular
+      finished: !stoppedForCellular && failed === 0,
+      stoppedForCellular: stoppedForCellular,
+      failed: failed
     });
   } finally {
     syncRunning = false;

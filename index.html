@@ -309,6 +309,11 @@
     navigator.serviceWorker.register("sw.js").catch(function () {
       swWarning.textContent = "Service worker kon niet geregistreerd worden — offline gebruik werkt hierdoor nog niet. Controleer de installatie-instructies (Chrome-vlag voor dit adres).";
     });
+    // Vraag persistente opslag aan zodat Android/Chrome de gedownloade
+    // mp3's niet stilletjes opruimt bij opslagdruk.
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist();
+    }
     navigator.serviceWorker.addEventListener("message", function (event) {
       const msg = event.data;
       if (!msg || msg.type !== "cache-progress") return;
@@ -323,6 +328,12 @@
         saveState();
       } else if (msg.stoppedForCellular) {
         cacheProgressText.textContent = "Gepauzeerd (" + msg.done + " / " + msg.total + ") — wifi verbroken, wacht tot wifi terug is.";
+      } else if (msg.done === msg.total && msg.failed) {
+        // Alles is geprobeerd, maar niet alles is gelukt — niet als "klaar"
+        // onthouden, zodat de volgende keer met wifi de ontbrekende
+        // woorden automatisch opnieuw geprobeerd worden.
+        cacheProgressText.textContent =
+          msg.failed + " van de " + msg.total + " woorden konden niet gedownload worden — open de app nog eens met wifi om dit opnieuw te proberen.";
       } else {
         cacheProgressText.textContent = "Offline voorbereiden: " + msg.done + " / " + msg.total;
       }

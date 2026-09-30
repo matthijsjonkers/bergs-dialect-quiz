@@ -140,6 +140,8 @@
       <input id="pauseInput" type="number" min="0" max="10" step="1" value="1">
     </div>
     <button id="resetProgressBtn">Voortgang wissen (alle woorden opnieuw "niet gekend")</button>
+    <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
+    <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
     <div id="swWarning"></div>
     <button id="closeSettingsBtn">Sluiten</button>
   </div>
@@ -209,6 +211,8 @@
   const settingsModal = document.getElementById("settingsModal");
   const closeSettingsBtn = document.getElementById("closeSettingsBtn");
   const resetProgressBtn = document.getElementById("resetProgressBtn");
+  const forceDownloadBtn = document.getElementById("forceDownloadBtn");
+  const debugInfo = document.getElementById("debugInfo");
   const pauseInput = document.getElementById("pauseInput");
   const swWarning = document.getElementById("swWarning");
   const player = document.getElementById("player");
@@ -552,7 +556,19 @@
     else stopQuiz();
   });
 
+  function updateDebugInfo() {
+    const status = wifiStatus();
+    const statusLabel = status === true ? "wifi (bevestigd)" : status === false ? "mobiel internet (bevestigd)" : "onbekend";
+    const conn = getConnection();
+    debugInfo.textContent =
+      "Woorden: " + WORDS.length + "\n" +
+      "Mp3-sync voltooid voor: " + state.mp3sSyncedCount + " / " + WORDS.length + " woorden\n" +
+      "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +
+      "Service worker actief: " + (navigator.serviceWorker && navigator.serviceWorker.controller ? "ja" : "nee");
+  }
+
   settingsBtn.addEventListener("click", function () {
+    updateDebugInfo();
     settingsModal.classList.remove("hidden");
   });
   closeSettingsBtn.addEventListener("click", function () {
@@ -564,6 +580,15 @@
     state.lastRoundCounts = null;
     saveState();
     updateScoreOverview();
+    settingsModal.classList.add("hidden");
+  });
+
+  forceDownloadBtn.addEventListener("click", function () {
+    downloadMp3Btn.hidden = true;
+    cacheProgressWrap.hidden = false;
+    cacheProgressFill.style.width = "0%";
+    cacheProgressText.textContent = "Downloaden geforceerd gestart...";
+    requestMp3Sync(true);
     settingsModal.classList.add("hidden");
   });
 

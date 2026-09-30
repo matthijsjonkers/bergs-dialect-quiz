@@ -17,7 +17,7 @@
 // mobiel, stopt de synchronisatie. Individuele mp3's die nog niet in de
 // cache zitten worden bij het afspelen ook nooit via mobiel netwerk
 // opgehaald.
-const CACHE_VERSION = "cfd4773fbc24-mp3sync3";
+const CACHE_VERSION = "cfd4773fbc24-mp3sync4";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 
@@ -89,7 +89,7 @@ self.addEventListener("activate", (event) => {
 
 let syncRunning = false;
 
-async function syncMp3s() {
+async function syncMp3s(force) {
   if (syncRunning) return;
   syncRunning = true;
   try {
@@ -104,7 +104,7 @@ async function syncMp3s() {
     broadcast({ type: "cache-progress", done: 0, total: total, finished: false });
 
     await mapLimit(words, 6, async (word) => {
-      if (!isWifiOk()) { stoppedForCellular = true; return; }
+      if (!force && !isWifiOk()) { stoppedForCellular = true; return; }
       try {
         const already = await mp3Cache.match(word.file);
         if (!already) {
@@ -142,7 +142,7 @@ async function syncMp3s() {
 
 self.addEventListener("message", (event) => {
   if (!event.data || event.data.type !== "sync-mp3s") return;
-  const promise = syncMp3s();
+  const promise = syncMp3s(!!event.data.force);
   if (event.waitUntil) event.waitUntil(promise);
 });
 

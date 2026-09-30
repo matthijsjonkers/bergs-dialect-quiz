@@ -274,9 +274,9 @@
     return c.type === "wifi";
   }
 
-  function requestMp3Sync() {
+  function requestMp3Sync(force) {
     navigator.serviceWorker.ready.then(function (reg) {
-      if (reg.active) reg.active.postMessage({ type: "sync-mp3s" });
+      if (reg.active) reg.active.postMessage({ type: "sync-mp3s", force: !!force });
     });
   }
 
@@ -292,12 +292,17 @@
     const status = wifiStatus();
     if (status === true) {
       downloadMp3Btn.hidden = true;
-      requestMp3Sync();
+      requestMp3Sync(false);
     } else if (status === false) {
-      downloadMp3Btn.hidden = true;
+      // De browser denkt dat dit mobiel internet is — dat blijkt in de
+      // praktijk niet altijd te kloppen (sommige toestellen/netwerken
+      // herkennen wifi niet goed). Toon daarom altijd ook de downloadknop
+      // als handmatige overrule, anders zit je vast als de detectie het
+      // fout heeft.
+      downloadMp3Btn.hidden = false;
       cacheProgressWrap.hidden = false;
       cacheProgressFill.style.width = "0%";
-      cacheProgressText.textContent = "Mobiel internet gedetecteerd — mp3's worden pas gedownload zodra er wifi is.";
+      cacheProgressText.textContent = "Mobiel internet gedetecteerd — mp3's worden pas gedownload zodra er wifi is. Zit je toch op wifi? Tik dan op \"Mp3's downloaden\".";
     } else {
       // Kan niet vaststellen of dit wifi is: niet automatisch downloaden,
       // gebruiker moet zelf bevestigen.
@@ -350,7 +355,10 @@
 
     downloadMp3Btn.addEventListener("click", function () {
       downloadMp3Btn.hidden = true;
-      requestMp3Sync();
+      // Handmatige tik = gebruiker bevestigt zelf dat er wifi is, dus
+      // forceren, ook als de browser het (mogelijk verkeerd) als mobiel
+      // internet detecteert.
+      requestMp3Sync(true);
     });
   } else {
     swWarning.textContent = "Deze browser ondersteunt geen service workers — offline gebruik is niet mogelijk.";
@@ -458,8 +466,12 @@
   function playCurrent() {
     player.src = state.currentWord.file;
     player.currentTime = 0;
-    player.play().catch(function () {
-      statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
+    player.play().catch(function (err) {
+      if (err && err.name === "NotAllowedError") {
+        statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
+      } else {
+        statusText.textContent = "Dit fragment kon niet geladen worden (niet gedownload?). Open de app met wifi om te syncen.";
+      }
     });
   }
 

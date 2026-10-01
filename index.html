@@ -140,6 +140,9 @@
       <input id="pauseInput" type="number" min="0" max="10" step="1" value="1">
     </div>
     <button id="resetProgressBtn">Voortgang wissen (alle woorden opnieuw "niet gekend")</button>
+    <button id="exportProgressBtn">Voortgang exporteren naar bestand</button>
+    <button id="importProgressBtn">Voortgang importeren uit bestand</button>
+    <input id="importProgressInput" type="file" accept="application/json" hidden>
     <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
     <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
     <div id="swWarning"></div>
@@ -213,6 +216,9 @@
   const settingsModal = document.getElementById("settingsModal");
   const closeSettingsBtn = document.getElementById("closeSettingsBtn");
   const resetProgressBtn = document.getElementById("resetProgressBtn");
+  const exportProgressBtn = document.getElementById("exportProgressBtn");
+  const importProgressBtn = document.getElementById("importProgressBtn");
+  const importProgressInput = document.getElementById("importProgressInput");
   const forceDownloadBtn = document.getElementById("forceDownloadBtn");
   const debugInfo = document.getElementById("debugInfo");
   const pauseInput = document.getElementById("pauseInput");
@@ -612,6 +618,57 @@
     saveState();
     updateScoreOverview();
     settingsModal.classList.add("hidden");
+  });
+
+  exportProgressBtn.addEventListener("click", function () {
+    const data = {
+      type: "bergs-quiz-voortgang",
+      exportedAt: new Date().toISOString(),
+      lastResults: state.lastResults,
+      lastRoundCounts: state.lastRoundCounts
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "dieje-lekt-voortgang.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  importProgressBtn.addEventListener("click", function () {
+    importProgressInput.click();
+  });
+
+  importProgressInput.addEventListener("change", function () {
+    const file = importProgressInput.files[0];
+    importProgressInput.value = ""; // zodat hetzelfde bestand later opnieuw gekozen kan worden
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      let data;
+      try {
+        data = JSON.parse(reader.result);
+      } catch (e) {
+        alert("Dit bestand kon niet gelezen worden — is het wel een eerder geëxporteerd voortgangsbestand?");
+        return;
+      }
+      if (!data || typeof data.lastResults !== "object" || data.lastResults === null) {
+        alert("Dit bestand bevat geen geldige voortgang.");
+        return;
+      }
+      const count = Object.keys(data.lastResults).length;
+      if (!confirm("Dit vervangt je huidige voortgang door de " + count + " woorden uit dit bestand. Doorgaan?")) return;
+      state.lastResults = data.lastResults;
+      state.lastRoundCounts = data.lastRoundCounts || null;
+      saveState();
+      updateScoreOverview();
+      settingsModal.classList.add("hidden");
+      alert("Voortgang geïmporteerd (" + count + " woorden).");
+    };
+    reader.readAsText(file);
   });
 
   forceDownloadBtn.addEventListener("click", function () {

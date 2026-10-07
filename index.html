@@ -51,6 +51,7 @@
   #controlStrip button:active { background: #444; }
   #controlStrip button:disabled { opacity: .4; cursor: not-allowed; }
   #controlStrip button[hidden] { display: none; }
+  #controlStrip button.on { background: #1e8a4c; border-color: #2fb86b; color: #fff; }
   #statusText { flex: 1 1 auto; text-align: center; font-size: .95rem; min-width: 120px; }
 
   #topOverlay {
@@ -66,6 +67,13 @@
     color: rgba(255,255,255,.75);
     text-align: center;
   }
+  #voiceHint {
+    font-size: .7rem;
+    color: rgba(255,255,255,.75);
+    text-align: center;
+    margin-top: .15rem;
+  }
+  #voiceHint:empty { display: none; }
   #cacheProgressWrap { margin-top: .3rem; }
   #cacheProgressWrap[hidden] { display: none; }
   #cacheProgressText {
@@ -115,6 +123,7 @@
 <div id="app">
   <div id="topOverlay">
     <div id="scoreOverview">Laden…</div>
+    <div id="voiceHint"></div>
     <div id="cacheProgressWrap" hidden>
       <div id="cacheProgressText"></div>
       <div id="cacheProgressBar"><div id="cacheProgressFill"></div></div>
@@ -125,6 +134,7 @@
     <button id="settingsBtn" title="Instellingen">⚙</button>
     <button id="startBtn" disabled>Laden…</button>
     <button id="replayBtn" title="Woord opnieuw afspelen" disabled>🔁</button>
+    <button id="voiceBtn" title="Spraakbediening: antwoord met &quot;ja&quot; of &quot;nee&quot;" hidden>🎤</button>
     <div id="statusText">Woorden worden geladen…</div>
     <button id="installBtn" hidden>📲 Installeer app</button>
     <button id="downloadMp3Btn" hidden>⬇️ Mp3's downloaden</button>
@@ -144,6 +154,7 @@
     <button id="importProgressBtn">Voortgang importeren uit bestand</button>
     <input id="importProgressInput" type="file" accept="application/json" hidden>
     <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
+    <div id="voiceInfo" style="font-size:.8rem;color:#aaa;margin-top:.75rem;"></div>
     <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
     <div id="swWarning"></div>
     <button id="closeSettingsBtn">Sluiten</button>
@@ -177,6 +188,7 @@
 
   const state = {
     pauseMs: (stored.pauseMs != null ? stored.pauseMs : 1000),
+    voiceEnabled: stored.voiceEnabled === true,   // handsfree antwoorden met "ja"/"nee"
     lastResults: stored.lastResults || {},        // wordId -> 'gekend' | 'niet'
     lastRoundCounts: stored.lastRoundCounts || null, // { gekend, niet }
     // Hoeveel mp3's er gedownload zijn wordt bewust NIET opgeslagen: dat
@@ -198,6 +210,7 @@
   function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       pauseMs: state.pauseMs,
+      voiceEnabled: state.voiceEnabled,
       lastResults: state.lastResults,
       lastRoundCounts: state.lastRoundCounts
     }));
@@ -211,6 +224,9 @@
   const statusText = document.getElementById("statusText");
   const startBtn = document.getElementById("startBtn");
   const replayBtn = document.getElementById("replayBtn");
+  const voiceBtn = document.getElementById("voiceBtn");
+  const voiceHint = document.getElementById("voiceHint");
+  const voiceInfo = document.getElementById("voiceInfo");
   const installBtn = document.getElementById("installBtn");
   const downloadMp3Btn = document.getElementById("downloadMp3Btn");
   const settingsBtn = document.getElementById("settingsBtn");
@@ -553,6 +569,235 @@
   }
 
   // ---------------------------------------------------------------------
+  // Spraakbediening: "ja" / "nee" in plaats van rood/groen tikken
+  // ---------------------------------------------------------------------
+  // Bedoeld voor gebruik in de auto: handen aan het stuur, antwoorden met
+  // je stem. "ja" telt als GEKEND, "nee" als NIET GEKEND. Tikken blijft
+  // gewoon werken; de microfoon is een extra manier van antwoorden.
+  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+  // Bewust een korte, strakke woordenlijst. Hoe meer synoniemen ("goed",
+  // "niet", "geen idee"), hoe groter de kans dat de microfoon het
+  // afgespeelde fragment zelf opvangt en dat als antwoord telt.
+  const JA_WOORDEN = { ja: 1, jah: 1, jaa: 1, jawel: 1, yes: 1, yep: 1 };
+  const NEE_WOORDEN = { nee: 1, neen: 1, neeh: 1, neu: 1, no: 1, nope: 1 };
+
+  // Een bewust antwoord is kort. Komt er een langere zin binnen, dan is dat
+  // gepraat in de auto en geen antwoord — negeren, ook als er toevallig
+  // "ja" of "nee" in staat.
+  const MAX_ANTWOORD_WOORDEN = 3;
+
+  function tokenize(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/[^a-zà-ÿ]+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+  }
+
+  // Zoekt van achter naar voren: bij "ja, eh, nee" geldt het laatste woord.
+  function findAnswer(tokens) {
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      if (JA_WOORDEN[tokens[i]]) return "gekend";
+      if (NEE_WOORDEN[tokens[i]]) return "niet";
+    }
+    return null;
+  }
+
+  let recognition = null;       // actieve herkenner, of null
+  let voiceActive = false;      // willen we luisteren?
+  let voiceRestartTimer = null;
+  // Per herkende zin: welk antwoord daaruit al geteld is. De herkenner
+  // levert dezelfde zin meermaals aan terwijl hij hem bijschaaft ("j" →
+  // "ja" → "ja"), dus zonder dit zou één "ja" een paar keer meetellen.
+  // Verandert het antwoord alsnog ("ja" → "ja nee"), dan telt dat wél.
+  let actedAnswerForIndex = [];
+  let voiceNetworkErrors = 0;
+  let localVoiceReady = false;  // herkenning kan op het toestel zelf draaien
+
+  // Chrome 139+ kan Nederlands op het toestel zelf herkennen; dan werkt de
+  // spraakbediening óók zonder internet, net als de rest van de app. Alleen
+  // inschakelen als het echt beschikbaar is — anders weigert de herkenner.
+  if (SpeechRecognitionCtor && SpeechRecognitionCtor.available) {
+    try {
+      Promise.resolve(SpeechRecognitionCtor.available({ langs: ["nl-NL"], processLocally: true }))
+        .then(function (res) { localVoiceReady = (res === "available"); })
+        .catch(function () {});
+    } catch (e) { /* oudere browser, gewoon de online-herkenning gebruiken */ }
+  }
+
+  function setVoiceHint(text) {
+    voiceHint.textContent = text || "";
+  }
+
+  function startRecognition() {
+    if (!SpeechRecognitionCtor || !voiceActive || recognition) return;
+    if (document.visibilityState !== "visible") return;
+
+    const rec = new SpeechRecognitionCtor();
+    rec.lang = "nl-NL";
+    rec.continuous = true;      // blijven luisteren, niet na één zin stoppen
+    rec.interimResults = true;  // al reageren vóór de zin "af" is: scheelt een seconde
+    rec.maxAlternatives = 1;    // bij "ja"/"nee" voegt een tweede gok niets toe
+    if (localVoiceReady) {
+      try { rec.processLocally = true; } catch (e) {}
+    }
+
+    actedAnswerForIndex = [];
+
+    rec.onresult = function (event) {
+      voiceNetworkErrors = 0;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const tokens = tokenize(event.results[i][0].transcript);
+        const answer = (tokens.length && tokens.length <= MAX_ANTWOORD_WOORDEN)
+          ? findAnswer(tokens)
+          : null;
+        if (!answer || answer === actedAnswerForIndex[i]) continue;
+        actedAnswerForIndex[i] = answer;
+        if (handleVoiceAnswer(answer)) break;
+      }
+    };
+
+    rec.onerror = function (event) {
+      const err = event && event.error;
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        setVoiceEnabled(false);
+        setVoiceHint("🎤 Geen toegang tot de microfoon — geef de app toestemming in de browserinstellingen.");
+      } else if (err === "audio-capture") {
+        // Geen bruikbare microfoon (of een andere app heeft hem). Niet in een
+        // herstartlus blijven hangen.
+        setVoiceEnabled(false);
+        setVoiceHint("🎤 Geen microfoon beschikbaar — gebruikt een andere app hem misschien?");
+      } else if (err === "language-not-supported") {
+        setVoiceEnabled(false);
+        setVoiceHint("🎤 Nederlandse spraakherkenning is op dit toestel niet beschikbaar.");
+      } else if (err === "network") {
+        // Zonder on-device herkenning heeft de browser internet nodig. Niet
+        // eindeloos blijven proberen: dat kost alleen maar batterij.
+        voiceNetworkErrors += 1;
+        if (voiceNetworkErrors >= 3) {
+          setVoiceEnabled(false);
+          setVoiceHint("🎤 Spraakherkenning lukt hier niet zonder internet. Tik rood/groen, of probeer het weer met verbinding.");
+        }
+      }
+      // "no-speech" en "aborted" zijn normaal: onend herstart vanzelf.
+    };
+
+    rec.onend = function () {
+      recognition = null;
+      if (!voiceActive) return;
+      // De herkenner stopt uit zichzelf na een stilte; meteen weer aan.
+      voiceRestartTimer = setTimeout(startRecognition, 300);
+    };
+
+    try {
+      rec.start();
+      recognition = rec;
+      updateVoiceStatusText();
+    } catch (e) {
+      // start() op een al lopende herkenner: volgende onend pakt het op.
+    }
+  }
+
+  function stopRecognition() {
+    if (voiceRestartTimer) { clearTimeout(voiceRestartTimer); voiceRestartTimer = null; }
+    const rec = recognition;
+    recognition = null;
+    if (!rec) return;
+    rec.onend = null; // geen automatische herstart meer
+    try { rec.abort(); } catch (e) {}
+  }
+
+  // Tijdens het afspelen nemen we geen antwoord aan: in de auto komt het
+  // fragment uit de autospeakers en hoort de microfoon het gewoon mee. Een
+  // "ja" of "nee" in de betekenis van een woord zou dan voor jouw antwoord
+  // doorgaan. Na afloop van het fragment is dat gevaar weg.
+  function voiceGateOpen() {
+    return state.phase === "answering" && (player.paused || player.ended);
+  }
+
+  function handleVoiceAnswer(answer) {
+    if (!voiceGateOpen()) return false;
+    setVoiceHint("🎤 Gehoord: “" + (answer === "gekend" ? "ja" : "nee") + "”");
+    registerResult(answer, state.session);
+    return true;
+  }
+
+  function updateVoiceStatusText() {
+    if (!voiceActive) { setVoiceHint(""); return; }
+    if (!recognition) { setVoiceHint("🎤 Spraakbediening aan"); return; }
+    if (state.phase === "answering" && !voiceGateOpen()) {
+      setVoiceHint("🎤 Zeg “ja” of “nee” zodra het fragment klaar is");
+      return;
+    }
+    setVoiceHint("🎤 Luistert — zeg “ja” of “nee”");
+  }
+
+  function setVoiceEnabled(on) {
+    state.voiceEnabled = !!on;
+    voiceActive = state.voiceEnabled;
+    saveState();
+    voiceBtn.classList.toggle("on", voiceActive);
+    voiceBtn.setAttribute("aria-pressed", voiceActive ? "true" : "false");
+    if (voiceActive) {
+      voiceNetworkErrors = 0;
+      startRecognition();
+      updateVoiceStatusText();
+      requestQuizWakeLock();
+    } else {
+      stopRecognition();
+      releaseQuizWakeLock();
+      setVoiceHint("");
+    }
+  }
+
+  // Zonder dit valt het scherm tijdens een handsfree beurt in slaap, wordt
+  // de pagina bevroren en luistert er niets meer mee — precies wanneer je
+  // het scherm juist níet kunt aanraken.
+  let quizWakeLock = null;
+  function requestQuizWakeLock() {
+    if (quizWakeLock || !navigator.wakeLock) return;
+    if (!voiceActive || !state.running) return;
+    if (document.visibilityState !== "visible") return;
+    navigator.wakeLock.request("screen").then(function (lock) {
+      quizWakeLock = lock;
+      lock.addEventListener("release", function () { quizWakeLock = null; });
+    }).catch(function () { /* mag geweigerd worden */ });
+  }
+  function releaseQuizWakeLock() {
+    if (!quizWakeLock) return;
+    const lock = quizWakeLock;
+    quizWakeLock = null;
+    try { lock.release(); } catch (e) {}
+  }
+
+  if (SpeechRecognitionCtor) {
+    voiceBtn.hidden = false;
+    voiceBtn.addEventListener("click", function () { setVoiceEnabled(!voiceActive); });
+    voiceInfo.textContent =
+      "🎤 in de bedieningsbalk zet spraakbediening aan: antwoord dan met “ja” (gekend) of " +
+      "“nee” (niet gekend) in plaats van rood/groen te tikken — handig in de auto. Een " +
+      "gesproken antwoord telt pas ná het fragment, anders zou de microfoon het fragment " +
+      "zelf als antwoord kunnen opvatten. Het scherm blijft aan zolang dit aan staat, en " +
+      "tikken blijft gewoon werken.";
+    // Eerder aangezet? Dan meteen weer luisteren. De microfoontoestemming is
+    // dan al gegeven, dus daar komt geen nieuwe vraag voor.
+    if (state.voiceEnabled) setVoiceEnabled(true);
+  } else {
+    voiceInfo.textContent = "Deze browser ondersteunt geen spraakherkenning, dus spraakbediening (“ja”/“nee”) is hier niet beschikbaar.";
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") {
+      if (voiceActive) startRecognition();
+      requestQuizWakeLock(); // een wake lock vervalt zodra de app naar de achtergrond gaat
+    } else {
+      stopRecognition();
+    }
+  });
+
+  // ---------------------------------------------------------------------
   // Woordwachtrij: "niet gekend" komt vaker terug
   // ---------------------------------------------------------------------
   function shuffle(arr) {
@@ -586,6 +831,8 @@
     state.queueIndex = -1;
     startBtn.textContent = "Stop quiz";
     settingsBtn.disabled = true;
+    requestQuizWakeLock();
+    if (voiceActive) startRecognition(); // eerder vastgelopen herkenner weer op gang helpen
     playNext(session);
   }
 
@@ -599,6 +846,7 @@
     settingsBtn.disabled = false;
     replayBtn.disabled = true;
     setZonesActive(false);
+    releaseQuizWakeLock();
     statusText.textContent = "Quiz gestopt. Start opnieuw wanneer je wil.";
   }
 
@@ -669,16 +917,26 @@
     }
     state.currentWord = state.queue[state.queueIndex];
     state.phase = "answering";
+    updateVoiceStatusText(); // "Gehoord: ja" van het vorige woord weghalen
     setZonesActive(true);
     replayBtn.disabled = false;
-    statusText.textContent = "Kies zodra je het weet — hoeft niet te wachten tot het einde.";
+    statusText.textContent = voiceActive
+      ? "Zeg “ja” of “nee” na het fragment — tikken mag meteen."
+      : "Kies zodra je het weet — hoeft niet te wachten tot het einde.";
     playCurrent();
   }
 
   player.addEventListener("ended", function () {
     if (state.phase !== "answering") return;
-    statusText.textContent = "Kende je dit woord? Tik rood of groen.";
+    updateVoiceStatusText(); // vanaf nu neemt de spraakbediening wél antwoord aan
+    statusText.textContent = voiceActive
+      ? "Kende je dit woord? Zeg “ja” of “nee”, of tik rood/groen."
+      : "Kende je dit woord? Tik rood of groen.";
   });
+
+  // Zolang er geluid speelt luistert de spraakbediening niet mee; dat hier
+  // bijwerken zodat het bijschrift altijd klopt (ook na 🔁).
+  player.addEventListener("playing", updateVoiceStatusText);
 
   function registerResult(result, session) {
     if (session !== state.session) return;
@@ -714,6 +972,7 @@
     state.running = false;
     setZonesActive(false);
     replayBtn.disabled = true;
+    releaseQuizWakeLock();
   }
 
   // ---------------------------------------------------------------------

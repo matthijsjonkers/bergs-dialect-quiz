@@ -12,9 +12,22 @@ Hoe het werkt
 2. Je hoeft niet te wachten tot het einde: zodra je het weet, tik je meteen
    rood (NIET GEKEND) of groen (GEKEND). Het fragment stopt dan direct.
 3. 🔁 speelt het huidige fragment nog eens af, ook tijdens het afspelen.
-4. Woorden die je als "niet gekend" markeert komen vaker terug in latere
+4. 🎤 zet spraakbediening aan (handsfree, bedoeld voor in de auto): in
+   plaats van tikken zeg je "ja" (gekend) of "nee" (niet gekend). Tikken
+   blijft daarnaast gewoon werken, ook tijdens het fragment.
+   - Een gesproken antwoord telt pas ná het fragment. Tijdens het afspelen
+     luistert de app bewust niet mee: via de autospeakers hoort de
+     microfoon het fragment zelf, en een "ja" of "nee" in de uitgesproken
+     betekenis zou dan als jouw antwoord doorgaan.
+   - Alleen korte antwoorden tellen (hooguit drie woorden), zodat gepraat
+     in de auto niet per ongeluk een woord afvinkt.
+   - Zolang spraakbediening aan staat tijdens een beurt blijft het scherm
+     aan; anders valt de app in slaap en luistert er niets meer mee.
+   - De microfoon staat alleen aan zolang de app open is en de knop groen
+     is; de aan/uit-stand wordt onthouden.
+5. Woorden die je als "niet gekend" markeert komen vaker terug in latere
    beurten, zodat je vooral herhaalt wat je nog niet kent.
-5. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
+6. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
    Je voortgang wordt lokaal bewaard (blijft staan na het sluiten van de app).
 
 Techniek
@@ -76,3 +89,11 @@ Beperkingen
   duizenden fragmenten.
 - De repo is publiek: broncode en bestandenlijst zijn zichtbaar voor
   iedereen op GitHub.
+- Spraakbediening ("ja"/"nee") is het enige onderdeel dat meestal wél
+  internet nodig heeft: de meeste browsers sturen het geluid naar de
+  server van de browserleverancier. Alleen als de browser Nederlands op
+  het toestel zelf kan herkennen (Chrome 139+ met het taalpakket) werkt
+  het ook offline; de app schakelt dat automatisch in als het kan. Lukt
+  herkenning niet, dan zet de app spraakbediening uit met een melding en
+  kun je gewoon weer tikken. De quiz zelf blijft altijd volledig offline
+  werken.

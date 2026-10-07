@@ -23,7 +23,7 @@
 // Deze service worker doet dus alleen nog: de app-schil cachen en alles
 // cache-first serveren. Individuele mp3's die nog niet in de cache zitten
 // worden bij het afspelen nooit via een mobiel netwerk opgehaald.
-const CACHE_VERSION = "cfd4773fbc24-pagesync1";
+const CACHE_VERSION = "cfd4773fbc24-voice1";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 

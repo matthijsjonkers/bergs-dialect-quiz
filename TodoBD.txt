@@ -1,1 +1,1 @@
-Kan je de mp3's in de map mp3 analyseren en uitschrijven wat er in gezegd wordt?
+Genereer het icoontje opnieuw adhv de bestanden in map icon (vorige versie was onbedoeld halftransparant op sommige plekken)

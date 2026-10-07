@@ -179,7 +179,10 @@
     pauseMs: (stored.pauseMs != null ? stored.pauseMs : 1000),
     lastResults: stored.lastResults || {},        // wordId -> 'gekend' | 'niet'
     lastRoundCounts: stored.lastRoundCounts || null, // { gekend, niet }
-    mp3sSyncedCount: stored.mp3sSyncedCount || 0, // aantal woorden waarvoor mp3's al volledig gedownload zijn
+    // Hoeveel mp3's er gedownload zijn wordt bewust NIET opgeslagen: dat
+    // getal bleek te kunnen afwijken van de werkelijkheid (afgebroken
+    // download) en werd dan toch geloofd. Het wordt nu elke keer opnieuw
+    // uit Cache Storage geteld, zie refreshSyncState().
     phase: "idle",       // idle | answering | summary
     queue: [],
     queueIndex: -1,
@@ -196,8 +199,7 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       pauseMs: state.pauseMs,
       lastResults: state.lastResults,
-      lastRoundCounts: state.lastRoundCounts,
-      mp3sSyncedCount: state.mp3sSyncedCount
+      lastRoundCounts: state.lastRoundCounts
     }));
   }
 
@@ -270,10 +272,18 @@
     });
 
   // ---------------------------------------------------------------------
-  // Service worker: zorgt voor echte offline werking
+  // Service worker + offline-opslag van de mp3's
   // ---------------------------------------------------------------------
   // Mp3's mogen nooit via mobiel internet (4G/5G) gedownload worden,
   // alleen via wifi — anders gaat dit ten koste van een beperkt databundel.
+  //
+  // Het downloaden gebeurt hier in de pagina en niet in de service worker:
+  // Chrome breekt een service worker af zodra één event langer dan ~5
+  // minuten bezig is, en bij ~1800 fragmenten gebeurde dat halverwege.
+  // Dat ging stilletjes, waardoor de app dacht klaar te zijn terwijl een
+  // deel van de woorden ontbrak — offline kreeg je dan ineens "fragment
+  // kon niet geladen worden". Zolang de app open staat loopt het
+  // downloaden hier gewoon door.
   function getConnection() {
     return navigator.connection || navigator.webkitConnection || navigator.mozConnection || null;
   }
@@ -286,40 +296,181 @@
     return c.type === "wifi";
   }
 
-  function requestMp3Sync(force) {
-    navigator.serviceWorker.ready.then(function (reg) {
-      if (reg.active) reg.active.postMessage({ type: "sync-mp3s", force: !!force });
+  const hasCacheStorage = ("caches" in window);
+
+  // Cache Storage bewaart sleutels als absolute url. Overal dezelfde
+  // omzetting gebruiken, zodat opslaan en opzoeken gegarandeerd matchen.
+  function absUrl(file) {
+    return new URL(file, document.baseURI).href;
+  }
+
+  function openMp3Cache() {
+    return caches.open(MP3_CACHE_NAME);
+  }
+
+  // De woorden waarvan de mp3 nog niet in de offline-opslag zit. In één
+  // keer alle cache-sleutels opvragen is veel sneller dan per woord een
+  // losse match() doen (~1800 stuks).
+  function findMissing(cache) {
+    return cache.keys().then(function (keys) {
+      const have = Object.create(null);
+      keys.forEach(function (req) { have[req.url] = true; });
+      return WORDS.filter(function (w) { return !have[absUrl(w.file)]; });
     });
+  }
+
+  let missingCount = null; // aantal nog ontbrekende fragmenten, null = onbekend
+
+  // Telt wat er écht in de offline-opslag zit. Bewust niet vertrouwen op
+  // het onthouden aantal uit localStorage: als een eerdere download
+  // halverwege is afgebroken klopt dat getal niet meer, en dan blijft de
+  // app ten onrechte denken dat alles binnen is.
+  function refreshSyncState() {
+    if (!hasCacheStorage || !WORDS.length) return Promise.resolve(null);
+    return openMp3Cache()
+      .then(findMissing)
+      .then(function (missing) {
+        missingCount = missing.length;
+        return missing;
+      })
+      .catch(function () { return null; });
+  }
+
+  function renderProgress(done, total, opts) {
+    const o = opts || {};
+    cacheProgressWrap.hidden = false;
+    cacheProgressFill.style.width = (total ? Math.round((done / total) * 100) : 0) + "%";
+    if (o.finished) {
+      cacheProgressText.textContent = "Klaar voor offline gebruik ✔ (" + total + " woorden)";
+      setTimeout(function () { cacheProgressWrap.hidden = true; }, 4000);
+    } else if (o.stoppedForCellular) {
+      cacheProgressText.textContent = "Gepauzeerd (" + done + " / " + total + ") — geen wifi meer, wacht tot wifi terug is.";
+    } else if (o.missing) {
+      cacheProgressText.textContent =
+        o.missing + " van de " + total + " fragmenten ontbreken nog. Tik op \"Mp3's downloaden\" zodra je op wifi zit.";
+    } else {
+      cacheProgressText.textContent = "Offline voorbereiden: " + done + " / " + total;
+    }
+  }
+
+  // Voert fn uit voor elk item, met maximaal `limit` gelijktijdig — voorkomt
+  // dat we bij duizenden mp3's alles in één keer tegelijk gaan opvragen.
+  function mapLimit(items, limit, fn) {
+    return new Promise(function (resolve) {
+      let index = 0;
+      let active = 0;
+      let doneCount = 0;
+
+      function next() {
+        if (doneCount >= items.length) { resolve(); return; }
+        while (active < limit && index < items.length) {
+          const item = items[index++];
+          active++;
+          fn(item).catch(function () {}).then(function () {
+            active--;
+            doneCount++;
+            next();
+          });
+        }
+      }
+      next();
+    });
+  }
+
+  let syncRunning = false;
+
+  async function syncMp3s(force) {
+    if (syncRunning || !hasCacheStorage || !WORDS.length) return;
+    syncRunning = true;
+    let wakeLock = null;
+    try {
+      // Zonder dit valt het scherm tijdens een lange download in slaap en
+      // wordt de pagina afgeknepen, waardoor het downloaden alsnog
+      // halverwege blijft steken.
+      try {
+        if (navigator.wakeLock && document.visibilityState === "visible") {
+          wakeLock = await navigator.wakeLock.request("screen");
+        }
+      } catch (e) { /* mag geweigerd worden, dan gewoon door */ }
+
+      const cache = await openMp3Cache();
+      const total = WORDS.length;
+      const missing = await findMissing(cache);
+      let done = total - missing.length;
+      let stoppedForCellular = false;
+
+      renderProgress(done, total);
+
+      await mapLimit(missing, 6, async function (word) {
+        if (!force && wifiStatus() === false) { stoppedForCellular = true; return; }
+        try {
+          // De x-mp3-sync-header zorgt dat de service worker dit verzoek
+          // doorlaat in plaats van het uit de cache te beantwoorden of te
+          // blokkeren; no-store voorkomt dat het bestand óók nog eens in
+          // de gewone http-cache belandt.
+          const res = await fetch(word.file, {
+            headers: { "x-mp3-sync": "1" },
+            cache: "no-store"
+          });
+          if (res.ok) await cache.put(absUrl(word.file), res);
+        } catch (e) { /* ontbrekende blijft ontbreken, zie hertelling */ }
+        done++;
+        if (done % 10 === 0 || done === total) renderProgress(done, total);
+      });
+
+      // Hertellen in plaats van de lus-teller geloven: alleen wat echt in
+      // de cache staat telt als gedownload.
+      const stillMissing = await refreshSyncState();
+      if (!stillMissing) return; // cache niet uitleesbaar, niets te melden
+      const left = stillMissing.length;
+      downloadMp3Btn.hidden = (left === 0);
+      renderProgress(total - left, total, {
+        finished: left === 0,
+        stoppedForCellular: stoppedForCellular && left > 0,
+        missing: left
+      });
+    } finally {
+      if (wakeLock) { try { await wakeLock.release(); } catch (e) {} }
+      syncRunning = false;
+    }
   }
 
   function updateWifiUi() {
     if (!WORDS.length) return; // woordenlijst nog niet geladen, later opnieuw proberen
-    if (state.mp3sSyncedCount === WORDS.length) {
-      // Al eerder volledig gedownload voor deze woordenlijst — niet telkens
-      // opnieuw de wifi-status checken of de gebruiker lastigvallen.
-      downloadMp3Btn.hidden = true;
-      cacheProgressWrap.hidden = true;
-      return;
-    }
-    const status = wifiStatus();
-    if (status === true) {
-      downloadMp3Btn.hidden = true;
-      requestMp3Sync(false);
-    } else if (status === false) {
-      // De browser denkt dat dit mobiel internet is — dat blijkt in de
-      // praktijk niet altijd te kloppen (sommige toestellen/netwerken
-      // herkennen wifi niet goed). Toon daarom altijd ook de downloadknop
-      // als handmatige overrule, anders zit je vast als de detectie het
-      // fout heeft.
+    refreshSyncState().then(function (missing) {
+      if (missing && missing.length === 0) {
+        // Alles staat er echt in — gebruiker niet lastigvallen.
+        downloadMp3Btn.hidden = true;
+        cacheProgressWrap.hidden = true;
+        return;
+      }
+      if (syncRunning) return; // download loopt al, die werkt de balk zelf bij
+      const total = WORDS.length;
+      const left = missing ? missing.length : null;
+      const status = wifiStatus();
+      if (status === true) {
+        downloadMp3Btn.hidden = true;
+        syncMp3s(false);
+        return;
+      }
+      // De browser denkt dat dit geen wifi is — dat blijkt in de praktijk
+      // niet altijd te kloppen (sommige toestellen/netwerken herkennen
+      // wifi niet goed). Toon daarom altijd de downloadknop als handmatige
+      // overrule, anders zit je vast als de detectie het fout heeft.
       downloadMp3Btn.hidden = false;
+      if (left === null) return; // niets zinnigs te melden zonder cache-info
       cacheProgressWrap.hidden = false;
-      cacheProgressFill.style.width = "0%";
-      cacheProgressText.textContent = "Mobiel internet gedetecteerd — mp3's worden pas gedownload zodra er wifi is. Zit je toch op wifi? Tik dan op \"Mp3's downloaden\".";
-    } else {
-      // Kan niet vaststellen of dit wifi is: niet automatisch downloaden,
-      // gebruiker moet zelf bevestigen.
-      downloadMp3Btn.hidden = false;
-    }
+      cacheProgressFill.style.width = Math.round(((total - left) / total) * 100) + "%";
+      const conn = getConnection();
+      const head = left + " van de " + total + " fragmenten ontbreken nog. ";
+      if (conn && conn.type === "none") {
+        cacheProgressText.textContent = head + "Je bent nu offline — verbind met wifi om ze op te halen.";
+      } else if (status === false) {
+        cacheProgressText.textContent = head + "Mobiel internet gedetecteerd, dus ze worden pas opgehaald op wifi. Zit je toch op wifi? Tik dan op \"Mp3's downloaden\".";
+      } else {
+        cacheProgressText.textContent = head + "Tik op \"Mp3's downloaden\" zodra je op wifi zit.";
+      }
+    });
   }
 
   if ("serviceWorker" in navigator) {
@@ -331,30 +482,6 @@
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist();
     }
-    navigator.serviceWorker.addEventListener("message", function (event) {
-      const msg = event.data;
-      if (!msg || msg.type !== "cache-progress") return;
-      if (!msg.total) return;
-      cacheProgressWrap.hidden = false;
-      const pct = Math.round((msg.done / msg.total) * 100);
-      cacheProgressFill.style.width = pct + "%";
-      if (msg.finished) {
-        cacheProgressText.textContent = "Klaar voor offline gebruik ✔ (" + msg.total + " woorden)";
-        setTimeout(function () { cacheProgressWrap.hidden = true; }, 4000);
-        state.mp3sSyncedCount = msg.total;
-        saveState();
-      } else if (msg.stoppedForCellular) {
-        cacheProgressText.textContent = "Gepauzeerd (" + msg.done + " / " + msg.total + ") — wifi verbroken, wacht tot wifi terug is.";
-      } else if (msg.done === msg.total && msg.failed) {
-        // Alles is geprobeerd, maar niet alles is gelukt — niet als "klaar"
-        // onthouden, zodat de volgende keer met wifi de ontbrekende
-        // woorden automatisch opnieuw geprobeerd worden.
-        cacheProgressText.textContent =
-          msg.failed + " van de " + msg.total + " woorden konden niet gedownload worden — open de app nog eens met wifi om dit opnieuw te proberen.";
-      } else {
-        cacheProgressText.textContent = "Offline voorbereiden: " + msg.done + " / " + msg.total;
-      }
-    });
 
     navigator.serviceWorker.ready.then(function () {
       updateWifiUi();
@@ -370,7 +497,7 @@
       // Handmatige tik = gebruiker bevestigt zelf dat er wifi is, dus
       // forceren, ook als de browser het (mogelijk verkeerd) als mobiel
       // internet detecteert.
-      requestMp3Sync(true);
+      syncMp3s(true);
     });
   } else {
     swWarning.textContent = "Deze browser ondersteunt geen service workers — offline gebruik is niet mogelijk.";
@@ -486,27 +613,48 @@
   // worden op sommige Android/Chrome-versies niet betrouwbaar door de
   // service worker opgevangen zodra er geen netwerk is — dit omzeilt dat.
   function resolvePlayableSrc(file) {
-    if (!("caches" in window)) return Promise.resolve(file);
-    return caches.open(MP3_CACHE_NAME)
-      .then(function (cache) { return cache.match(file); })
+    if (!hasCacheStorage) return Promise.resolve(file);
+    return openMp3Cache()
+      .then(function (cache) { return cache.match(absUrl(file)); })
       .then(function (res) { return res ? res.blob() : null; })
       .then(function (blob) { return blob ? URL.createObjectURL(blob) : file; })
       .catch(function () { return file; });
   }
 
+  // Melding als een fragment niet uit de offline-opslag komt. Zegt erbij
+  // hoeveel er in totaal ontbreken, zodat meteen duidelijk is of dit één
+  // uitschieter is of een half afgebroken download.
+  function notDownloadedMessage() {
+    if (missingCount) {
+      return "Dit fragment is nog niet gedownload — " + missingCount + " van de " +
+        WORDS.length + " fragmenten ontbreken. Ga naar ⚙ en tik op \"Mp3's nu downloaden\" met wifi.";
+    }
+    return "Dit fragment kon niet afgespeeld worden. Ga naar ⚙ voor de download-status.";
+  }
+
   function playCurrent() {
     const word = state.currentWord;
     resolvePlayableSrc(word.file).then(function (src) {
-      if (state.currentWord !== word) return; // ondertussen al doorgegaan naar een ander woord
+      const fromCache = src.indexOf("blob:") === 0;
+      if (state.currentWord !== word) {
+        // Ondertussen al doorgegaan naar een ander woord: deze blob-url
+        // wordt nooit meer gebruikt, dus meteen opruimen.
+        if (fromCache) URL.revokeObjectURL(src);
+        return;
+      }
       releaseBlobUrl();
-      if (src.indexOf("blob:") === 0) currentBlobUrl = src;
+      if (fromCache) currentBlobUrl = src;
       player.src = src;
       player.currentTime = 0;
       player.play().catch(function (err) {
-        if (err && err.name === "NotAllowedError") {
+        const name = err && err.name;
+        if (name === "AbortError") return; // we zijn zelf al verder gegaan
+        if (name === "NotAllowedError") {
           statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
+        } else if (!fromCache) {
+          statusText.textContent = notDownloadedMessage();
         } else {
-          statusText.textContent = "Dit fragment kon niet geladen worden (niet gedownload?). Open de app met wifi om te syncen.";
+          statusText.textContent = "Afspelen van dit fragment mislukte (" + (name || "onbekende fout") + ").";
         }
       });
     });
@@ -597,9 +745,12 @@
       type === "none" ? "geen verbinding" :
       type ? "mobiel internet (bevestigd)" :
       "onbekend";
+    const cached = missingCount === null
+      ? "onbekend (cache niet uitleesbaar)"
+      : (WORDS.length - missingCount) + " / " + WORDS.length + " (" + missingCount + " ontbreken)";
     debugInfo.textContent =
       "Woorden: " + WORDS.length + "\n" +
-      "Mp3-sync voltooid voor: " + state.mp3sSyncedCount + " / " + WORDS.length + " woorden\n" +
+      "Echt in offline-opslag: " + cached + "\n" +
       "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +
       "Service worker actief: " + (navigator.serviceWorker && navigator.serviceWorker.controller ? "ja" : "nee");
   }
@@ -607,6 +758,8 @@
   settingsBtn.addEventListener("click", function () {
     updateDebugInfo();
     settingsModal.classList.remove("hidden");
+    // Hertellen kost even; zodra het klaar is staat het juiste aantal er.
+    refreshSyncState().then(updateDebugInfo);
   });
   closeSettingsBtn.addEventListener("click", function () {
     settingsModal.classList.add("hidden");
@@ -676,7 +829,7 @@
     cacheProgressWrap.hidden = false;
     cacheProgressFill.style.width = "0%";
     cacheProgressText.textContent = "Downloaden geforceerd gestart...";
-    requestMp3Sync(true);
+    syncMp3s(true);
     settingsModal.classList.add("hidden");
   });
 

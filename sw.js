@@ -11,13 +11,19 @@
 // opgehaald te worden telkens als er een nieuwe woordenlijst is (dat zou
 // onnodig veel mobiele data kosten).
 //
-// Mp3's worden alleen gedownload op verzoek van de pagina (bericht
-// "sync-mp3s"), en de pagina stuurt dat verzoek alleen als er wifi is
-// gedetecteerd. Als de verbinding tijdens het downloaden wisselt naar
-// mobiel, stopt de synchronisatie. Individuele mp3's die nog niet in de
-// cache zitten worden bij het afspelen ook nooit via mobiel netwerk
-// opgehaald.
-const CACHE_VERSION = "cfd4773fbc24-mp3sync7-bloburl-export1";
+// Het downloaden van de mp3's gebeurt NIET hier maar in de pagina zelf
+// (zie index.html). Reden: Chrome breekt een service worker af zodra één
+// event langer dan ~5 minuten bezig is. Bij ~1800 fragmenten gebeurde dat
+// steevast halverwege, zonder enige melding — de pagina kreeg geen
+// "klaar"-bericht meer, maar onthield wél de laatst doorgegeven stand en
+// dacht daardoor dat alles gedownload was. Offline bleek dan ineens een
+// deel van de woorden te ontbreken. Zolang de app open staat kan de
+// pagina gewoon doordownloaden.
+//
+// Deze service worker doet dus alleen nog: de app-schil cachen en alles
+// cache-first serveren. Individuele mp3's die nog niet in de cache zitten
+// worden bij het afspelen nooit via een mobiel netwerk opgehaald.
+const CACHE_VERSION = "cfd4773fbc24-pagesync1";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 
@@ -30,43 +36,13 @@ const CORE_ASSETS = [
   "./words.json"
 ];
 
-async function broadcast(message) {
-  const clientsList = await self.clients.matchAll({ includeUncontrolled: true });
-  clientsList.forEach((client) => client.postMessage(message));
-}
-
-// true zolang we niet zeker weten dat het mobiel internet is — de pagina
-// heeft de trigger voor sync-mp3s al gegeven op basis van een bevestigde
-// wifi-verbinding; dit is alleen een extra check om te stoppen als de
-// verbinding tijdens het downloaden wisselt naar mobiel.
+// true zolang we niet zeker weten dat het mobiel internet is. Wordt alleen
+// gebruikt om te voorkomen dat een los, nog niet gedownload fragment
+// tijdens het spelen alsnog over een mobiel netwerk opgehaald wordt.
 function isWifiOk() {
   const c = self.navigator && self.navigator.connection;
   if (!c || !c.type) return true;
   return c.type === "wifi";
-}
-
-// Voert fn uit voor elk item, met maximaal `limit` gelijktijdig — voorkomt
-// dat we bij duizenden mp3's alles in één keer tegelijk gaan opvragen.
-function mapLimit(items, limit, fn) {
-  return new Promise((resolve) => {
-    let index = 0;
-    let active = 0;
-    let doneCount = 0;
-
-    function next() {
-      if (doneCount >= items.length) { resolve(); return; }
-      while (active < limit && index < items.length) {
-        const item = items[index++];
-        active++;
-        fn(item).catch(function () {}).then(function () {
-          active--;
-          doneCount++;
-          next();
-        });
-      }
-    }
-    next();
-  });
 }
 
 self.addEventListener("install", (event) => {
@@ -87,67 +63,15 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
-let syncRunning = false;
-
-async function syncMp3s(force) {
-  if (syncRunning) return;
-  syncRunning = true;
-  try {
-    const mp3Cache = await caches.open(MP3_CACHE_NAME);
-    const wordsRes = await fetch("./words.json");
-    const words = await wordsRes.json();
-
-    let done = 0;
-    let failed = 0;
-    let stoppedForCellular = false;
-    const total = words.length;
-    broadcast({ type: "cache-progress", done: 0, total: total, finished: false });
-
-    await mapLimit(words, 6, async (word) => {
-      if (!force && !isWifiOk()) { stoppedForCellular = true; return; }
-      try {
-        const already = await mp3Cache.match(word.file);
-        if (!already) {
-          const res = await fetch(word.file);
-          if (res.ok) {
-            await mp3Cache.put(word.file, res);
-          } else {
-            failed++;
-          }
-        }
-      } catch (e) {
-        failed++;
-      }
-      done++;
-      if (done % 10 === 0 || done === total) {
-        broadcast({ type: "cache-progress", done: done, total: total, finished: false });
-      }
-    });
-
-    // Alleen echt "klaar" als alles gelukt is — niet elk mislukt fragment
-    // stilletjes negeren, anders lijkt het net alsof offline gebruik werkt
-    // terwijl er losse woorden ontbreken in de cache.
-    broadcast({
-      type: "cache-progress",
-      done: done,
-      total: total,
-      finished: !stoppedForCellular && failed === 0,
-      stoppedForCellular: stoppedForCellular,
-      failed: failed
-    });
-  } finally {
-    syncRunning = false;
-  }
-}
-
-self.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "sync-mp3s") return;
-  const promise = syncMp3s(!!event.data.force);
-  if (event.waitUntil) event.waitUntil(promise);
-});
-
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  // Download-opdracht van de pagina zelf: niet onderscheppen. De pagina
+  // beheert de mp3-synchronisatie en heeft de wifi-afweging al gemaakt;
+  // zou deze handler hem oppakken, dan werd het verzoek hieronder
+  // geblokkeerd of uit de cache beantwoord in plaats van opgehaald.
+  if (event.request.headers.get("x-mp3-sync")) return;
+
   const isMp3 = event.request.url.indexOf("/mp3/") !== -1;
 
   event.respondWith((async () => {

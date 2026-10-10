@@ -117,6 +117,16 @@
     font-size: .8rem; color: #f0a04b; margin-top: .75rem;
   }
   #swWarning:empty { display: none; }
+
+  #updateModal p { font-size: .9rem; line-height: 1.45; color: #ccc; margin: 0; }
+  #updateNowBtn {
+    background: #1e8a4c; color: #fff; border: 1px solid #2fb86b;
+    border-radius: 6px; font-size: 1rem; font-weight: 600;
+  }
+  #updateLaterBtn {
+    background: #333; color: #eee; border: 1px solid #555;
+    border-radius: 6px; font-size: .95rem;
+  }
 </style>
 </head>
 <body>
@@ -158,6 +168,17 @@
     <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
     <div id="swWarning"></div>
     <button id="closeSettingsBtn">Sluiten</button>
+  </div>
+</div>
+
+<div id="updateModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Nieuwe versie beschikbaar</h2>
+    <p>Er staat een nieuwe versie van de quiz klaar. Bijwerken duurt een
+       paar seconden en de app herstart daarna even. Je voortgang en de
+       gedownloade fragmenten blijven gewoon staan.</p>
+    <button id="updateNowBtn">Nu bijwerken</button>
+    <button id="updateLaterBtn">Later</button>
   </div>
 </div>
 
@@ -233,6 +254,9 @@
   const scoreOverview = document.getElementById("scoreOverview");
   const settingsModal = document.getElementById("settingsModal");
   const closeSettingsBtn = document.getElementById("closeSettingsBtn");
+  const updateModal = document.getElementById("updateModal");
+  const updateNowBtn = document.getElementById("updateNowBtn");
+  const updateLaterBtn = document.getElementById("updateLaterBtn");
   const resetProgressBtn = document.getElementById("resetProgressBtn");
   const exportProgressBtn = document.getElementById("exportProgressBtn");
   const importProgressBtn = document.getElementById("importProgressBtn");
@@ -448,6 +472,9 @@
     } finally {
       if (wakeLock) { try { await wakeLock.release(); } catch (e) {} }
       syncRunning = false;
+      // Kwam er tijdens het downloaden een update klaar te staan, dan nu pas
+      // vragen — herladen zou de download afgebroken hebben.
+      showPendingUpdatePrompt();
     }
   }
 
@@ -489,18 +516,143 @@
     });
   }
 
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js").catch(function () {
-      swWarning.textContent = "Service worker kon niet geregistreerd worden — offline gebruik werkt hierdoor nog niet. Controleer de installatie-instructies (Chrome-vlag voor dit adres).";
+  // ---------------------------------------------------------------------
+  // Bijwerken naar een nieuwe versie
+  // ---------------------------------------------------------------------
+  // Omdat alles cache-first geserveerd wordt, blijft de app anders
+  // onbeperkt de oude index.html tonen. Een nieuwe service worker
+  // installeert zichzelf wel op de achtergrond, maar blijft bewust wachten
+  // (sw.js doet geen skipWaiting). Hier merken we dat, vragen we het de
+  // gebruiker, en nemen we hem daarna in gebruik + herladen we de pagina.
+  // Zonder die vraag zou de app midden in een beurt vervangen worden.
+  let waitingWorker = null;        // de klaarstaande nieuwe versie
+  let updatePromptPending = false; // versie klaar, maar nu even niet storen
+  let updateInProgress = false;    // "Nu bijwerken" aangetikt, wacht op herladen
+  let reloadStarted = false;
+
+  // Niet met de vraag binnenvallen tijdens een lopende beurt of een lopende
+  // mp3-download: herladen zou allebei halverwege afbreken.
+  function mayInterrupt() {
+    return !state.running && !syncRunning;
+  }
+
+  function newVersionReady(worker) {
+    if (!worker || updateInProgress) return;
+    waitingWorker = worker;
+    if (mayInterrupt()) showUpdatePrompt();
+    else updatePromptPending = true;
+  }
+
+  function showUpdatePrompt() {
+    if (!waitingWorker || updateInProgress) return;
+    updatePromptPending = false;
+    updateModal.classList.remove("hidden");
+  }
+
+  // Aangeroepen zodra een beurt of een download klaar is: een update die
+  // ondertussen klaarkwam alsnog aanbieden.
+  function showPendingUpdatePrompt() {
+    if (updatePromptPending && mayInterrupt()) showUpdatePrompt();
+  }
+
+  function reloadForUpdate() {
+    if (reloadStarted) return;
+    reloadStarted = true;
+    location.reload();
+  }
+
+  function applyUpdate() {
+    if (!waitingWorker) return;
+    updateInProgress = true;
+    updateModal.classList.add("hidden");
+    statusText.textContent = "Bijwerken…";
+    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+    // Zodra de nieuwe versie het overneemt komt "controllerchange" binnen
+    // en herladen we. Vangnet voor als dat onverhoopt uitblijft, zodat de
+    // app niet op "Bijwerken…" blijft hangen:
+    setTimeout(reloadForUpdate, 5000);
+  }
+
+  function watchForUpdates(reg) {
+    if (!reg) return;
+
+    // Stond er al een versie klaar van een vorige keer dat de app openstond?
+    if (reg.waiting && navigator.serviceWorker.controller) newVersionReady(reg.waiting);
+
+    reg.addEventListener("updatefound", function () {
+      const installing = reg.installing;
+      if (!installing) return;
+      installing.addEventListener("statechange", function () {
+        // Zonder controller is dit de allereerste installatie — dan valt er
+        // niets te vervangen en hoeft er dus ook niets gevraagd te worden.
+        if (installing.state === "installed" && navigator.serviceWorker.controller) {
+          newVersionReady(installing);
+        }
+      });
     });
+
+    // De browser kijkt uit zichzelf alleen bij het openen van de app of er
+    // een nieuwe sw.js is (en hooguit eens per 24 uur). Wie de app lang open
+    // laat staan zou een update dus niet zien; daarom zelf kijken zodra de
+    // app weer op de voorgrond komt, en periodiek. De throttle voorkomt een
+    // netwerkverzoek bij elke keer wisselen tussen apps.
+    let lastCheck = 0;
+    function checkForUpdate() {
+      if (!navigator.onLine) return;
+      const now = Date.now();
+      if (now - lastCheck < 15 * 60 * 1000) return;
+      lastCheck = now;
+      reg.update().catch(function () { /* offline of server onbereikbaar */ });
+    }
+    setInterval(checkForUpdate, 60 * 60 * 1000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") checkForUpdate();
+    });
+  }
+
+  updateNowBtn.addEventListener("click", applyUpdate);
+  updateLaterBtn.addEventListener("click", function () {
+    updateModal.classList.add("hidden");
+    // Niet in deze sessie blijven zeuren; bij de volgende keer openen staat
+    // de versie nog steeds klaar (reg.waiting) en wordt het opnieuw gevraagd.
+    updatePromptPending = false;
+  });
+
+  // Versie van de actieve service worker, zodat in ⚙ te zien is of een
+  // update echt doorgekomen is.
+  let activeVersion = null;
+  function askActiveVersion() {
+    const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!sw || !window.MessageChannel) return;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = function (e) {
+      activeVersion = e.data;
+      updateDebugInfo();
+    };
+    sw.postMessage({ type: "GET_VERSION" }, [channel.port2]);
+  }
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js")
+      .then(watchForUpdates)
+      .catch(function () {
+        swWarning.textContent = "Service worker kon niet geregistreerd worden — offline gebruik werkt hierdoor nog niet. Controleer de installatie-instructies (Chrome-vlag voor dit adres).";
+      });
     // Vraag persistente opslag aan zodat Android/Chrome de gedownloade
     // mp3's niet stilletjes opruimt bij opslagdruk.
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist();
     }
 
+    // Vuurt ook bij de allereerste installatie (clients.claim); alleen
+    // herladen als wij het zelf in gang gezet hebben.
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (updateInProgress) reloadForUpdate();
+    });
+
     navigator.serviceWorker.ready.then(function () {
       updateWifiUi();
+      askActiveVersion();
     });
 
     const connection = getConnection();
@@ -848,6 +1000,7 @@
     setZonesActive(false);
     releaseQuizWakeLock();
     statusText.textContent = "Quiz gestopt. Start opnieuw wanneer je wil.";
+    showPendingUpdatePrompt();
   }
 
   let currentBlobUrl = null;
@@ -973,6 +1126,7 @@
     setZonesActive(false);
     replayBtn.disabled = true;
     releaseQuizWakeLock();
+    showPendingUpdatePrompt();
   }
 
   // ---------------------------------------------------------------------
@@ -1008,6 +1162,7 @@
       ? "onbekend (cache niet uitleesbaar)"
       : (WORDS.length - missingCount) + " / " + WORDS.length + " (" + missingCount + " ontbreken)";
     debugInfo.textContent =
+      "Versie: " + (activeVersion || "onbekend") + (waitingWorker ? " (update klaar om te installeren)" : "") + "\n" +
       "Woorden: " + WORDS.length + "\n" +
       "Echt in offline-opslag: " + cached + "\n" +
       "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +
@@ -1015,6 +1170,7 @@
   }
 
   settingsBtn.addEventListener("click", function () {
+    askActiveVersion();
     updateDebugInfo();
     settingsModal.classList.remove("hidden");
     // Hertellen kost even; zodra het klaar is staat het juiste aantal er.

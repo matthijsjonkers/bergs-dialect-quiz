@@ -23,7 +23,12 @@
 // Deze service worker doet dus alleen nog: de app-schil cachen en alles
 // cache-first serveren. Individuele mp3's die nog niet in de cache zitten
 // worden bij het afspelen nooit via een mobiel netwerk opgehaald.
-const CACHE_VERSION = "cfd4773fbc24-voice1";
+//
+// Een nieuwe versie van deze service worker installeert zichzelf wel
+// meteen, maar neemt het bewust NIET uit zichzelf over (geen skipWaiting
+// in install). De pagina merkt dat er een versie klaarstaat, vraagt de
+// gebruiker of hij wil bijwerken, en stuurt pas daarna "SKIP_WAITING".
+const CACHE_VERSION = "cfd4773fbc24-update1";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 
@@ -48,9 +53,25 @@ function isWifiOk() {
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CORE_CACHE_NAME);
-    await cache.addAll(CORE_ASSETS);
-    self.skipWaiting();
+    // cache: "reload" zodat de app-schil gegarandeerd van het netwerk komt
+    // en niet uit de gewone http-cache van de browser. GitHub Pages laat
+    // bestanden een tijdje cachen; zonder dit kon een net geïnstalleerde
+    // "nieuwe" versie alsnog de oude index.html bevatten.
+    await cache.addAll(CORE_ASSETS.map((url) => new Request(url, { cache: "reload" })));
+    // Geen skipWaiting() hier: deze versie blijft in "waiting" staan tot de
+    // gebruiker in de app op "Nu bijwerken" tikt. Zie de message-handler.
   })());
+});
+
+// De pagina vraagt om de overname zodra de gebruiker akkoord is, en kan de
+// versie opvragen om die in het instellingenscherm te tonen.
+self.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  } else if (data.type === "GET_VERSION" && event.ports && event.ports[0]) {
+    event.ports[0].postMessage(CACHE_VERSION);
+  }
 });
 
 self.addEventListener("activate", (event) => {

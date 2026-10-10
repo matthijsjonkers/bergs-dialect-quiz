@@ -25,9 +25,13 @@ Hoe het werkt
      aan; anders valt de app in slaap en luistert er niets meer mee.
    - De microfoon staat alleen aan zolang de app open is en de knop groen
      is; de aan/uit-stand wordt onthouden.
-5. Woorden die je als "niet gekend" markeert komen vaker terug in latere
+5. Staat er een nieuwe versie van de app klaar, dan vraagt hij "Nieuwe
+   versie beschikbaar — nu bijwerken?". Tik je op "Nu bijwerken", dan
+   installeert en herstart hij zichzelf in een paar seconden. Zie
+   "Bijwerken" verderop.
+6. Woorden die je als "niet gekend" markeert komen vaker terug in latere
    beurten, zodat je vooral herhaalt wat je nog niet kent.
-6. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
+7. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
    Je voortgang wordt lokaal bewaard (blijft staan na het sluiten van de app).
 
 Techniek
@@ -70,9 +74,38 @@ Nieuwe mp3's toevoegen
      git commit -m "Nieuwe woorden toegevoegd"
      git push
    GitHub Pages bouwt de site binnen ongeveer een minuut opnieuw.
-4. Open de app nog een keer op je telefoon terwijl je internet hebt — de
-   voortgangsbalk verschijnt weer en download alles (ook de ongewijzigde
-   fragmenten) opnieuw naar de cache.
+4. Open de app op je telefoon terwijl je internet hebt. Hij vraagt zelf of
+   je wil bijwerken (zie "Bijwerken" hieronder); daarna verschijnt de
+   voortgangsbalk voor de nieuwe fragmenten.
+
+Bijwerken (hoe de telefoon een nieuwe versie oppikt)
+De app serveert alles uit zijn eigen cache, anders zou hij offline niet
+werken. Daardoor zou hij uit zichzelf eeuwig de oude versie blijven tonen.
+Daarom:
+- De service worker in sw.js doet bewust GEEN skipWaiting(). Een nieuwe
+  versie installeert zichzelf wel vast op de achtergrond, maar blijft
+  daarna in "waiting" staan.
+- De pagina merkt dat (updatefound / reg.waiting) en toont de vraag
+  "Nieuwe versie beschikbaar". Pas bij "Nu bijwerken" stuurt hij
+  SKIP_WAITING naar de wachtende versie en herlaadt hij zichzelf zodra
+  die het overneemt.
+- Tijdens een lopende beurt of een lopende mp3-download wordt de vraag
+  uitgesteld (herladen zou die afbreken); hij komt zodra dat klaar is.
+  Kies je "Later", dan wordt het bij de volgende keer openen opnieuw
+  gevraagd.
+- De browser kijkt uit zichzelf alleen bij het openen van de app of er een
+  nieuwe sw.js is. De app controleert daarom ook zelf: elk uur, en zodra
+  hij weer op de voorgrond komt (hooguit eens per kwartier).
+- Je voortgang en de gedownloade mp3's blijven bij een update staan: de
+  mp3-cache is niet geversioneerd en alleen de oude app-schil wordt
+  opgeruimd.
+- Onder ⚙ staat bij "Versie" welke versie actief is (= CACHE_VERSION uit
+  sw.js), en of er een update klaarstaat.
+
+LET OP bij het uitrollen: verandert alleen index.html en niet words.json,
+dan blijft de hash die build.js in sw.js zet gelijk en ziet de telefoon de
+update níet. Pas dan CACHE_VERSION in sw.js met de hand aan (achtervoegsel
+ophogen, bijvoorbeeld "-update1" -> "-update2") voordat je pusht.
 
 Lokaal testen zonder internet (optioneel)
 "serve.js" (node serve.js) start een lokale webserver voor als je liever

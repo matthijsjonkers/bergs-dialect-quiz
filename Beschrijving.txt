@@ -28,6 +28,10 @@ Hoe het werkt
      aan; anders valt de app in slaap en luistert er niets meer mee.
    - De microfoon staat alleen aan zolang de app open is en de knop groen
      is; de aan/uit-stand wordt onthouden.
+   - Werkt de spraakbediening niet zoals verwacht, kijk dan onder ⚙: daar
+     staat of de herkenning op het toestel zelf of via internet loopt, en
+     een logboek van de laatste 25 gebeurtenissen (mic aan/uit, fouten,
+     wat er gehoord is en of het geteld werd).
 5. Staat er een nieuwe versie van de app klaar, dan vraagt hij "Nieuwe
    versie beschikbaar — nu bijwerken?". Tik je op "Nu bijwerken", dan
    installeert en herstart hij zichzelf in een paar seconden. Zie

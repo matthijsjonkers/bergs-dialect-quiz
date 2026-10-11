@@ -166,6 +166,7 @@
     <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
     <div id="voiceInfo" style="font-size:.8rem;color:#aaa;margin-top:.75rem;"></div>
     <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
+    <div id="voiceLogInfo" style="font-size:.7rem;color:#888;margin-top:.75rem;white-space:pre-line;font-family:ui-monospace,Consolas,monospace;"></div>
     <div id="swWarning"></div>
     <button id="closeSettingsBtn">Sluiten</button>
   </div>
@@ -263,6 +264,7 @@
   const importProgressInput = document.getElementById("importProgressInput");
   const forceDownloadBtn = document.getElementById("forceDownloadBtn");
   const debugInfo = document.getElementById("debugInfo");
+  const voiceLogInfo = document.getElementById("voiceLogInfo");
   const pauseInput = document.getElementById("pauseInput");
   const swWarning = document.getElementById("swWarning");
   const player = document.getElementById("player");
@@ -689,10 +691,31 @@
   // ---------------------------------------------------------------------
   // Geluid (Web Audio, geen bestanden nodig) — voor de ping/buzz tikjes
   // ---------------------------------------------------------------------
+  // De AudioContext ontstaat bij het eerste tikje — dus bij het eerste
+  // antwoord — en bleef daarna draaien. Een lopende AudioContext houdt op
+  // Android een uitgang open, en dat botst met de spraakherkenner, die de
+  // audiofocus wil. Vanaf het tweede woord was de microfoon daardoor de
+  // verliezer. Hem na elk tikje weer laten slapen lost dat op.
   let audioCtx = null;
+  let audioSuspendTimer = null;
+
   function getAudioCtx() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioSuspendTimer) { clearTimeout(audioSuspendTimer); audioSuspendTimer = null; }
+    if (audioCtx.state === "suspended") {
+      try { audioCtx.resume(); } catch (e) {}
+    }
     return audioCtx;
+  }
+
+  function suspendAudioCtxSoon() {
+    if (audioSuspendTimer) clearTimeout(audioSuspendTimer);
+    audioSuspendTimer = setTimeout(function () {
+      audioSuspendTimer = null;
+      if (audioCtx && audioCtx.state === "running") {
+        try { audioCtx.suspend(); } catch (e) {}
+      }
+    }, 700); // ruim na het langste tikje (0,45 s)
   }
 
   function playTone(kind) {
@@ -718,6 +741,7 @@
       osc.start(now);
       osc.stop(now + 0.45);
     }
+    suspendAudioCtxSoon();
   }
 
   // ---------------------------------------------------------------------
@@ -757,9 +781,27 @@
     return null;
   }
 
-  let recognition = null;       // actieve herkenner, of null
-  let voiceActive = false;      // willen we luisteren?
+  // Kort logboek van de spraakherkenning, te zien onder ⚙. Op een telefoon
+  // is er geen console, dus zonder dit is niet te achterhalen waaróm de
+  // herkenner stopt of een antwoord niet oppikt.
+  const VOICE_LOG_MAX = 25;
+  const voiceLog = [];
+  function logVoice(text) {
+    const d = new Date();
+    const pad = function (n) { return ("0" + n).slice(-2); };
+    voiceLog.push(pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()) + "  " + text);
+    if (voiceLog.length > VOICE_LOG_MAX) voiceLog.shift();
+  }
+
+  let recognition = null;        // lopende herkenner, of null
+  let recognitionClosing = false; // vorige sessie sluit nog af
+  let closeGuardTimer = null;    // vangnet als dat afsluiten blijft hangen
+  let voiceActive = false;       // willen we luisteren?
   let voiceRestartTimer = null;
+  // Hoe vaak start() achter elkaar mislukte. Begrensd, zodat een toestel dat
+  // de microfoon niet vrijgeeft geen eindeloze reeks piepjes oplevert.
+  let voiceStartFailures = 0;
+  const MAX_START_FAILURES = 4;
   // Per herkende zin: welk antwoord daaruit al geteld is. De herkenner
   // levert dezelfde zin meermaals aan terwijl hij hem bijschaaft ("j" →
   // "ja" → "ja"), dus zonder dit zou één "ja" een paar keer meetellen.
@@ -785,6 +827,11 @@
 
   function startRecognition() {
     if (!SpeechRecognitionCtor || recognition) return;
+    // Een vorige sessie die nog aan het afsluiten is, heeft de herkenner van
+    // het toestel nog vast. Meteen een nieuwe starten mislukt dan of eindigt
+    // direct weer — precies de start/stop-lus die je als piepjes hoort. De
+    // onend van die vorige sessie start ons alsnog, zodra hij echt klaar is.
+    if (recognitionClosing) { logVoice("wacht: vorige sessie sluit nog af"); return; }
     if (!voiceWindowOpen()) return;
     if (voiceRestartTimer) { clearTimeout(voiceRestartTimer); voiceRestartTimer = null; }
 
@@ -802,18 +849,29 @@
     rec.onresult = function (event) {
       voiceNetworkErrors = 0;
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const tokens = tokenize(event.results[i][0].transcript);
-        const answer = (tokens.length && tokens.length <= MAX_ANTWOORD_WOORDEN)
-          ? findAnswer(tokens)
-          : null;
-        if (!answer || answer === actedAnswerForIndex[i]) continue;
+        const heard = String(event.results[i][0].transcript || "").trim();
+        const tokens = tokenize(heard);
+        const tooLong = tokens.length > MAX_ANTWOORD_WOORDEN;
+        const answer = (tokens.length && !tooLong) ? findAnswer(tokens) : null;
+        if (!answer) {
+          logVoice("gehoord: “" + heard + "” → " +
+            (tooLong ? "te lang, genegeerd" : "geen ja/nee"));
+          continue;
+        }
+        if (answer === actedAnswerForIndex[i]) continue; // al geteld
         actedAnswerForIndex[i] = answer;
-        if (handleVoiceAnswer(answer)) break;
+        if (handleVoiceAnswer(answer)) {
+          logVoice("gehoord: “" + heard + "” → geteld als " +
+            (answer === "gekend" ? "GEKEND" : "NIET GEKEND"));
+          break;
+        }
+        logVoice("gehoord: “" + heard + "” → buiten het antwoordvenster");
       }
     };
 
     rec.onerror = function (event) {
       const err = event && event.error;
+      logVoice("fout: " + (err || "onbekend"));
       if (err === "not-allowed" || err === "service-not-allowed") {
         setVoiceEnabled(false);
         setVoiceHint("🎤 Geen toegang tot de microfoon — geef de app toestemming in de browserinstellingen.");
@@ -826,19 +884,26 @@
         setVoiceEnabled(false);
         setVoiceHint("🎤 Nederlandse spraakherkenning is op dit toestel niet beschikbaar.");
       } else if (err === "network") {
-        // Zonder on-device herkenning heeft de browser internet nodig. Niet
-        // eindeloos blijven proberen: dat kost alleen maar batterij.
+        // Zonder herkenning op het toestel zelf heeft de browser internet
+        // nodig. Meteen laten zien wat er aan de hand is in plaats van drie
+        // keer stil te blijven proberen — anders sta je te praten tegen een
+        // app die het niet kan horen en weet je niet waarom.
         voiceNetworkErrors += 1;
         if (voiceNetworkErrors >= 3) {
           setVoiceEnabled(false);
           setVoiceHint("🎤 Spraakherkenning lukt hier niet zonder internet. Tik rood/groen, of probeer het weer met verbinding.");
+        } else {
+          setVoiceHint("🎤 Geen internet voor spraakherkenning — nog even proberen…");
         }
       }
       // "no-speech" en "aborted" zijn normaal: onend herstart vanzelf.
     };
 
     rec.onend = function () {
-      recognition = null;
+      logVoice("mic uit");
+      if (recognition === rec) recognition = null;
+      recognitionClosing = false; // het toestel heeft de herkenner weer vrij
+      if (closeGuardTimer) { clearTimeout(closeGuardTimer); closeGuardTimer = null; }
       // Android sluit een sessie uit zichzelf af bij stilte. Alleen
       // herstarten als het antwoordvenster nog openstaat — anders zouden we
       // tijdens het volgende fragment weer gaan meeluisteren, met alle
@@ -847,15 +912,36 @@
       voiceRestartTimer = setTimeout(function () {
         voiceRestartTimer = null;
         startRecognition();
+        updateVoiceStatusText();
       }, 300);
     };
 
     try {
       rec.start();
       recognition = rec;
+      voiceStartFailures = 0;
+      logVoice("mic aan (" + (localVoiceReady ? "op het toestel" : "via internet") + ")");
       updateVoiceStatusText();
     } catch (e) {
-      // start() op een al lopende herkenner: volgende onend pakt het op.
+      // start() mislukt — het toestel houdt de herkenner nog vast. Er komt
+      // geen onend voor deze herkenner, dus hier zelf een nieuwe poging
+      // inplannen; zonder dat bleef de microfoon voorgoed uit voor dit woord.
+      logVoice("starten mislukt: " + (e && e.name ? e.name : "onbekend"));
+      voiceStartFailures += 1;
+      if (voiceStartFailures > MAX_START_FAILURES) {
+        // Blijven rammen op een herkenner die niet vrijkomt levert alleen
+        // maar start/stop-piepjes op. Dit woord met tikken afhandelen; bij
+        // het volgende woord krijgt de microfoon een schone kans.
+        logVoice("opgegeven voor dit woord — microfoon komt niet vrij");
+        updateVoiceStatusText(); // die kent deze stand, zie hieronder
+        return;
+      }
+      // Oplopend wachten tussen de pogingen: 0,6 — 1,2 — 2,4 — 4,8 seconde.
+      voiceRestartTimer = setTimeout(function () {
+        voiceRestartTimer = null;
+        startRecognition();
+        updateVoiceStatusText();
+      }, 600 * Math.pow(2, voiceStartFailures - 1));
     }
   }
 
@@ -864,8 +950,28 @@
     const rec = recognition;
     recognition = null;
     if (!rec) return;
-    rec.onend = null; // geen automatische herstart meer
-    try { rec.abort(); } catch (e) {}
+    // onend bewust NIET weghalen: we moeten juist weten wanneer het toestel
+    // de herkenner echt heeft losgelaten. Tot die tijd blokkeert
+    // recognitionClosing een nieuwe sessie. Dat onend ziet aan recognition
+    // (al null) dat dit een bewuste stop is en herstart dus niet.
+    recognitionClosing = true;
+    // Vangnet: blijft onend onverhoopt uit, dan zou de microfoon voorgoed
+    // geblokkeerd blijven. Na twee seconden gaan we er toch van uit dat het
+    // toestel de herkenner heeft losgelaten.
+    if (closeGuardTimer) clearTimeout(closeGuardTimer);
+    closeGuardTimer = setTimeout(function () {
+      closeGuardTimer = null;
+      if (!recognitionClosing) return;
+      logVoice("afsluiten duurde te lang — toch weer vrijgegeven");
+      recognitionClosing = false;
+      syncRecognition();
+      updateVoiceStatusText();
+    }, 2000);
+    try {
+      rec.abort();
+    } catch (e) {
+      recognitionClosing = false;
+    }
   }
 
   // Tijdens het afspelen nemen we geen antwoord aan: in de auto komt het
@@ -914,6 +1020,11 @@
     if (!state.running) { setVoiceHint("🎤 Spraakbediening aan"); return; }
     if (!voiceGateOpen()) {
       setVoiceHint("🎤 Zeg “ja” of “nee” zodra het fragment klaar is");
+      return;
+    }
+    if (voiceStartFailures > MAX_START_FAILURES) {
+      // Opgegeven voor dit woord: niet laten denken dat er geluisterd wordt.
+      setVoiceHint("🎤 Microfoon komt niet vrij — tik rood of groen");
       return;
     }
     // De herkenner heeft na het starten even nodig voor hij echt luistert;
@@ -1100,7 +1211,8 @@
   function playCurrent() {
     const word = state.currentWord;
     fragmentFinished = false;
-    syncRecognition(); // microfoon uit zolang het fragment speelt
+    voiceStartFailures = 0; // nieuw woord: de microfoon krijgt een schone kans
+    syncRecognition();      // microfoon uit zolang het fragment speelt
     resolvePlayableSrc(word.file).then(function (src) {
       const fromCache = src.indexOf("blob:") === 0;
       if (state.currentWord !== word) {
@@ -1248,8 +1360,16 @@
     const cached = missingCount === null
       ? "onbekend (cache niet uitleesbaar)"
       : (WORDS.length - missingCount) + " / " + WORDS.length + " (" + missingCount + " ontbreken)";
+    const voiceMode = !SpeechRecognitionCtor
+      ? "niet beschikbaar in deze browser"
+      : (localVoiceReady ? "op het toestel zelf (werkt offline)" : "via internet (de browser stuurt het geluid op)");
+    voiceLogInfo.textContent = voiceLog.length
+      ? "Spraaklogboek (nieuwste onderaan):\n" + voiceLog.join("\n")
+      : "Spraaklogboek: nog niets opgenomen.";
+
     debugInfo.textContent =
       "Versie: " + (activeVersion || "onbekend") + (waitingWorker ? " (update klaar om te installeren)" : "") + "\n" +
+      "Spraakherkenning: " + voiceMode + "\n" +
       "Woorden: " + WORDS.length + "\n" +
       "Echt in offline-opslag: " + cached + "\n" +
       "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +

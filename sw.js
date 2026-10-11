@@ -28,7 +28,7 @@
 // meteen, maar neemt het bewust NIET uit zichzelf over (geen skipWaiting
 // in install). De pagina merkt dat er een versie klaarstaat, vraagt de
 // gebruiker of hij wil bijwerken, en stuurt pas daarna "SKIP_WAITING".
-const CACHE_VERSION = "cfd4773fbc24-voice2";
+const CACHE_VERSION = "cfd4773fbc24-voice3";
 const CORE_CACHE_NAME = "bergs-quiz-core-" + CACHE_VERSION;
 const MP3_CACHE_NAME = "bergs-quiz-mp3s";
 

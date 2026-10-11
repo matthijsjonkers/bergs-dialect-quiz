@@ -15,10 +15,13 @@ Hoe het werkt
 4. 🎤 zet spraakbediening aan (handsfree, bedoeld voor in de auto): in
    plaats van tikken zeg je "ja" (gekend) of "nee" (niet gekend). Tikken
    blijft daarnaast gewoon werken, ook tijdens het fragment.
-   - Een gesproken antwoord telt pas ná het fragment. Tijdens het afspelen
-     luistert de app bewust niet mee: via de autospeakers hoort de
+   - De microfoon gaat pas aan ná het fragment en meteen weer uit zodra je
+     antwoord geteld is. Twee redenen: via de autospeakers hoort de
      microfoon het fragment zelf, en een "ja" of "nee" in de uitgesproken
-     betekenis zou dan als jouw antwoord doorgaan.
+     betekenis zou dan als jouw antwoord doorgaan; én op Android pakt een
+     lopende spraakherkenner de audiofocus af van de speler, waardoor het
+     fragment wegviel en het toestel bij elke sessie zijn eigen start- en
+     stop-piepjes speelde.
    - Alleen korte antwoorden tellen (hooguit drie woorden), zodat gepraat
      in de auto niet per ongeluk een woord afvinkt.
    - Zolang spraakbediening aan staat tijdens een beurt blijft het scherm

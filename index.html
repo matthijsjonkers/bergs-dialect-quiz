@@ -784,8 +784,9 @@
   }
 
   function startRecognition() {
-    if (!SpeechRecognitionCtor || !voiceActive || recognition) return;
-    if (document.visibilityState !== "visible") return;
+    if (!SpeechRecognitionCtor || recognition) return;
+    if (!voiceWindowOpen()) return;
+    if (voiceRestartTimer) { clearTimeout(voiceRestartTimer); voiceRestartTimer = null; }
 
     const rec = new SpeechRecognitionCtor();
     rec.lang = "nl-NL";
@@ -838,9 +839,15 @@
 
     rec.onend = function () {
       recognition = null;
-      if (!voiceActive) return;
-      // De herkenner stopt uit zichzelf na een stilte; meteen weer aan.
-      voiceRestartTimer = setTimeout(startRecognition, 300);
+      // Android sluit een sessie uit zichzelf af bij stilte. Alleen
+      // herstarten als het antwoordvenster nog openstaat — anders zouden we
+      // tijdens het volgende fragment weer gaan meeluisteren, met alle
+      // piepjes en weggevallen geluid van dien.
+      if (!voiceWindowOpen()) { updateVoiceStatusText(); return; }
+      voiceRestartTimer = setTimeout(function () {
+        voiceRestartTimer = null;
+        startRecognition();
+      }, 300);
     };
 
     try {
@@ -866,7 +873,33 @@
   // "ja" of "nee" in de betekenis van een woord zou dan voor jouw antwoord
   // doorgaan. Na afloop van het fragment is dat gevaar weg.
   function voiceGateOpen() {
-    return state.phase === "answering" && (player.paused || player.ended);
+    return state.phase === "answering" && fragmentFinished;
+  }
+
+  // Wanneer mag de microfoon daadwerkelijk aan staan? Precies zolang een
+  // gesproken antwoord ook echt aangenomen wordt — niet langer.
+  //
+  // Eerder stond de herkenner continu aan, ook tijdens het fragment. Op
+  // Android pakt die dan de audiofocus af van de speler (het fragment viel
+  // weg of werd zachter) én speelt het toestel bij elke sessie zijn eigen
+  // start/stop-piepjes. Omdat Android een sessie uit zichzelf afsluit bij
+  // stilte en onend meteen herstartte, gaf dat een eindeloze reeks piepjes
+  // dwars door het fragment heen, met een knipperend microfoon-icoontje in
+  // de statusbalk. Luisteren tijdens het fragment leverde bovendien niets
+  // op: voiceGateOpen() weigerde dat antwoord toch al.
+  function voiceWindowOpen() {
+    return voiceActive &&
+      document.visibilityState === "visible" &&
+      state.running &&
+      voiceGateOpen();
+  }
+
+  // Zet de herkenner aan of uit zodat hij klopt met voiceWindowOpen().
+  // Bewust zonder het bijschrift aan te raken: de aanroepers bepalen zelf
+  // wat er moet staan (bijvoorbeeld "Gehoord: ja" na een antwoord).
+  function syncRecognition() {
+    if (voiceWindowOpen()) startRecognition();
+    else stopRecognition();
   }
 
   function handleVoiceAnswer(answer) {
@@ -878,12 +911,27 @@
 
   function updateVoiceStatusText() {
     if (!voiceActive) { setVoiceHint(""); return; }
-    if (!recognition) { setVoiceHint("🎤 Spraakbediening aan"); return; }
-    if (state.phase === "answering" && !voiceGateOpen()) {
+    if (!state.running) { setVoiceHint("🎤 Spraakbediening aan"); return; }
+    if (!voiceGateOpen()) {
       setVoiceHint("🎤 Zeg “ja” of “nee” zodra het fragment klaar is");
       return;
     }
-    setVoiceHint("🎤 Luistert — zeg “ja” of “nee”");
+    // De herkenner heeft na het starten even nodig voor hij echt luistert;
+    // dat verschil hier laten zien in plaats van alvast "Luistert" beloven.
+    setVoiceHint(recognition ? "🎤 Luistert — zeg “ja” of “nee”" : "🎤 Microfoon start…");
+  }
+
+  // De microfoon gaat nu pas aan ná een fragment. Vraag de toestemming
+  // daarom alvast bij het aantikken van 🎤 — dat is een bewuste handeling —
+  // in plaats van de gebruiker er middenin een beurt mee te overvallen. De
+  // stream wordt meteen weer losgelaten; het gaat puur om de toestemming.
+  function primeMicPermission() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(function (stream) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+      })
+      .catch(function () { /* geweigerd: onerror van de herkenner meldt het */ });
   }
 
   function setVoiceEnabled(on) {
@@ -894,7 +942,7 @@
     voiceBtn.setAttribute("aria-pressed", voiceActive ? "true" : "false");
     if (voiceActive) {
       voiceNetworkErrors = 0;
-      startRecognition();
+      syncRecognition();
       updateVoiceStatusText();
       requestQuizWakeLock();
     } else {
@@ -926,13 +974,20 @@
 
   if (SpeechRecognitionCtor) {
     voiceBtn.hidden = false;
-    voiceBtn.addEventListener("click", function () { setVoiceEnabled(!voiceActive); });
+    voiceBtn.addEventListener("click", function () {
+      const on = !voiceActive;
+      // Alleen bij een bewuste tik toestemming vragen — niet bij elke start
+      // van de app, want dan zou de microfoon-indicator onnodig oplichten.
+      if (on) primeMicPermission();
+      setVoiceEnabled(on);
+    });
     voiceInfo.textContent =
       "🎤 in de bedieningsbalk zet spraakbediening aan: antwoord dan met “ja” (gekend) of " +
-      "“nee” (niet gekend) in plaats van rood/groen te tikken — handig in de auto. Een " +
-      "gesproken antwoord telt pas ná het fragment, anders zou de microfoon het fragment " +
-      "zelf als antwoord kunnen opvatten. Het scherm blijft aan zolang dit aan staat, en " +
-      "tikken blijft gewoon werken.";
+      "“nee” (niet gekend) in plaats van rood/groen te tikken — handig in de auto. De " +
+      "microfoon gaat pas aan ná het fragment en meteen weer uit zodra je antwoord " +
+      "geteld is: tijdens het fragment zou de microfoon het fragment zelf als antwoord " +
+      "kunnen opvatten, en zou hij op Android het geluid onderbreken. Het scherm blijft " +
+      "aan zolang dit aan staat, en tikken blijft gewoon werken.";
     // Eerder aangezet? Dan meteen weer luisteren. De microfoontoestemming is
     // dan al gegeven, dus daar komt geen nieuwe vraag voor.
     if (state.voiceEnabled) setVoiceEnabled(true);
@@ -941,11 +996,13 @@
   }
 
   document.addEventListener("visibilitychange", function () {
+    // syncRecognition() kijkt zelf naar de zichtbaarheid: naar de
+    // achtergrond betekent microfoon uit, terug betekent alleen weer aan
+    // als er op dat moment ook echt op een antwoord gewacht wordt.
+    syncRecognition();
+    updateVoiceStatusText();
     if (document.visibilityState === "visible") {
-      if (voiceActive) startRecognition();
       requestQuizWakeLock(); // een wake lock vervalt zodra de app naar de achtergrond gaat
-    } else {
-      stopRecognition();
     }
   });
 
@@ -984,8 +1041,7 @@
     startBtn.textContent = "Stop quiz";
     settingsBtn.disabled = true;
     requestQuizWakeLock();
-    if (voiceActive) startRecognition(); // eerder vastgelopen herkenner weer op gang helpen
-    playNext(session);
+    playNext(session); // zet zelf de microfoon in de juiste stand
   }
 
   function stopQuiz() {
@@ -998,6 +1054,8 @@
     settingsBtn.disabled = false;
     replayBtn.disabled = true;
     setZonesActive(false);
+    syncRecognition();
+    updateVoiceStatusText();
     releaseQuizWakeLock();
     statusText.textContent = "Quiz gestopt. Start opnieuw wanneer je wil.";
     showPendingUpdatePrompt();
@@ -1033,8 +1091,16 @@
     return "Dit fragment kon niet afgespeeld worden. Ga naar ⚙ voor de download-status.";
   }
 
+  // true zodra het huidige fragment is uitgespeeld (of onspeelbaar bleek).
+  // Bewust een eigen vlag en niet player.paused: tussen "volgend woord" en
+  // het werkelijke begin van het geluid staat de speler ook even op pauze,
+  // en dan zou de microfoon onnodig even aan- en meteen weer uitgaan.
+  let fragmentFinished = false;
+
   function playCurrent() {
     const word = state.currentWord;
+    fragmentFinished = false;
+    syncRecognition(); // microfoon uit zolang het fragment speelt
     resolvePlayableSrc(word.file).then(function (src) {
       const fromCache = src.indexOf("blob:") === 0;
       if (state.currentWord !== word) {
@@ -1050,6 +1116,11 @@
       player.play().catch(function (err) {
         const name = err && err.name;
         if (name === "AbortError") return; // we zijn zelf al verder gegaan
+        // Er komt geen geluid, dus ook geen gevaar dat de microfoon het
+        // fragment zelf als antwoord opvat: luisteren mag nu wel. Zonder dit
+        // zou een onspeelbaar fragment de spraakbediening laten hangen.
+        fragmentFinished = true;
+        syncRecognition();
         if (name === "NotAllowedError") {
           statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
         } else if (!fromCache) {
@@ -1081,15 +1152,29 @@
 
   player.addEventListener("ended", function () {
     if (state.phase !== "answering") return;
+    fragmentFinished = true;
+    syncRecognition();       // nu pas de microfoon aanzetten
     updateVoiceStatusText(); // vanaf nu neemt de spraakbediening wél antwoord aan
     statusText.textContent = voiceActive
       ? "Kende je dit woord? Zeg “ja” of “nee”, of tik rood/groen."
       : "Kende je dit woord? Tik rood of groen.";
   });
 
+  // Loopt het afspelen ergens halverwege vast, dan komt "ended" nooit en zou
+  // de spraakbediening voorgoed blijven wachten. Behandel het als klaar.
+  player.addEventListener("error", function () {
+    if (state.phase !== "answering") return;
+    fragmentFinished = true;
+    syncRecognition();
+    updateVoiceStatusText();
+  });
+
   // Zolang er geluid speelt luistert de spraakbediening niet mee; dat hier
   // bijwerken zodat het bijschrift altijd klopt (ook na 🔁).
-  player.addEventListener("playing", updateVoiceStatusText);
+  player.addEventListener("playing", function () {
+    syncRecognition();
+    updateVoiceStatusText();
+  });
 
   function registerResult(result, session) {
     if (session !== state.session) return;
@@ -1105,6 +1190,7 @@
     updateScoreOverview();
 
     state.phase = "idle";
+    syncRecognition(); // antwoord binnen: microfoon uit tot na het volgende fragment
     state.nextTimer = setTimeout(function () { playNext(session); }, state.pauseMs);
   }
 
@@ -1125,6 +1211,7 @@
     state.running = false;
     setZonesActive(false);
     replayBtn.disabled = true;
+    syncRecognition();
     releaseQuizWakeLock();
     showPendingUpdatePrompt();
   }

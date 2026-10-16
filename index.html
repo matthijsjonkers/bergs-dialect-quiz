@@ -598,7 +598,9 @@
     // laat staan zou een update dus niet zien; daarom zelf kijken zodra de
     // app weer op de voorgrond komt, en periodiek. De throttle voorkomt een
     // netwerkverzoek bij elke keer wisselen tussen apps.
-    let lastCheck = 0;
+    // Start op "nu": de browser heeft bij het registreren hierboven zelf al
+    // naar een nieuwe sw.js gekeken, dus meteen nog eens vragen is zonde.
+    let lastCheck = Date.now();
     function checkForUpdate() {
       if (!navigator.onLine) return;
       const now = Date.now();
@@ -635,7 +637,11 @@
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js")
+    // updateViaCache: "none" — sw.js zelf nooit uit de gewone http-cache van
+    // de browser halen. GitHub Pages zet er een max-age op; zonder dit zag de
+    // app vlak na een nieuwe versie bij het opstarten soms nog de oude sw.js
+    // en bleef de vraag "Nieuwe versie beschikbaar" dus uit.
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
       .then(watchForUpdates)
       .catch(function () {
         swWarning.textContent = "Service worker kon niet geregistreerd worden — offline gebruik werkt hierdoor nog niet. Controleer de installatie-instructies (Chrome-vlag voor dit adres).";
@@ -708,14 +714,14 @@
     return audioCtx;
   }
 
-  function suspendAudioCtxSoon() {
+  function suspendAudioCtxSoon(delay) {
     if (audioSuspendTimer) clearTimeout(audioSuspendTimer);
     audioSuspendTimer = setTimeout(function () {
       audioSuspendTimer = null;
       if (audioCtx && audioCtx.state === "running") {
         try { audioCtx.suspend(); } catch (e) {}
       }
-    }, 700); // ruim na het langste tikje (0,45 s)
+    }, delay || 700); // standaard ruim na het langste tikje (0,45 s)
   }
 
   function playTone(kind) {
@@ -740,6 +746,25 @@
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
       osc.start(now);
       osc.stop(now + 0.45);
+    } else if (kind === "listen") {
+      // Twee korte, oplopende tikjes: "nu mag je praten". Bewust kort en
+      // duidelijk anders van vorm dan de ping/buzz van een geteld antwoord,
+      // zodat je in de auto aan het geluid alleen al hoort wat er gebeurt.
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.setValueAtTime(1320, now + 0.09);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.2, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+      gain.gain.exponentialRampToValueAtTime(0.2, now + 0.105);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.19);
+      osc.start(now);
+      osc.stop(now + 0.2);
+      // Dit tikje klinkt terwijl de herkenner net begint. Een lopende
+      // AudioContext pakt op Android de audiofocus af, dus hier extra snel
+      // weer in slaap — niet de standaard 0,7 s.
+      suspendAudioCtxSoon(280);
+      return;
     }
     suspendAudioCtxSoon();
   }
@@ -752,16 +777,35 @@
   // gewoon werken; de microfoon is een extra manier van antwoorden.
   const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
-  // Bewust een korte, strakke woordenlijst. Hoe meer synoniemen ("goed",
-  // "niet", "geen idee"), hoe groter de kans dat de microfoon het
-  // afgespeelde fragment zelf opvangt en dat als antwoord telt.
-  const JA_WOORDEN = { ja: 1, jah: 1, jaa: 1, jawel: 1, yes: 1, yep: 1 };
-  const NEE_WOORDEN = { nee: 1, neen: 1, neeh: 1, neu: 1, no: 1, nope: 1 };
+  // De lijst stond bewust krap omdat de microfoon vroeger ook tijdens het
+  // fragment aanstond en dat fragment dan als antwoord kon tellen. Sinds de
+  // microfoon pas ná het fragment aangaat, is dat gevaar weg en kost een
+  // krappe lijst alleen maar gemiste antwoorden — vooral bij "nee", dat kort
+  // en zacht is en door de herkenner van alles gemaakt wordt.
+  const JA_WOORDEN = { ja: 1, jah: 1, jaa: 1, jaah: 1, jawel: 1, jazeker: 1, jep: 1, yes: 1, yep: 1, yeah: 1 };
+  const NEE_WOORDEN = {
+    nee: 1, neen: 1, neeh: 1, neh: 1, ne: 1, "né": 1, nej: 1, neu: 1, neuh: 1,
+    nope: 1, no: 1, nah: 1, niet: 1, nooit: 1
+  };
+
+  // Klinkt het als "nee" maar schreef de herkenner er een ander woord van?
+  // Dat gebeurt doorlopend: "nee" is één lettergreep zonder medeklinker aan
+  // het eind en rijmt op een handvol gewone woorden. Alleen laten gelden als
+  // het hele antwoord uit dit ene woord bestaat — in het antwoordvenster is
+  // een losse "twee" vrijwel zeker een verkeerd verstane "nee".
+  const NEE_RIJMT_OP = { mee: 1, twee: 1, zee: 1, thee: 1, wee: 1, hee: 1, dee: 1, bee: 1, nie: 1, nih: 1, knee: 1 };
+
+  // Uitgerekte of half afgemaakte varianten die geen enkele lijst vangt:
+  // "jaaa", "jaw", "nééé", "nehh". Interimresultaten zijn vaak juist zulke
+  // halve woorden, en daar komt de snelste reactie vandaan.
+  const JA_KLANK = /^j+a+[hw]*$/;
+  const NEE_KLANK = /^n+[eéèê]+[hj]*$/;
 
   // Een bewust antwoord is kort. Komt er een langere zin binnen, dan is dat
   // gepraat in de auto en geen antwoord — negeren, ook als er toevallig
-  // "ja" of "nee" in staat.
-  const MAX_ANTWOORD_WOORDEN = 3;
+  // "ja" of "nee" in staat. Vier woorden, zodat "ik weet het niet" er nog
+  // net in past; dat is een even duidelijk "niet gekend" als "nee".
+  const MAX_ANTWOORD_WOORDEN = 4;
 
   function tokenize(text) {
     return String(text || "")
@@ -772,12 +816,19 @@
       .filter(Boolean);
   }
 
-  // Zoekt van achter naar voren: bij "ja, eh, nee" geldt het laatste woord.
   function findAnswer(tokens) {
+    if (!tokens.length) return null;
+    const zin = tokens.join(" ");
+    // Hele zinnetjes eerst: in "weet ik niet" zit geen los "nee", maar het
+    // antwoord is overduidelijk.
+    if (/(weet (ik |het )?niet|geen idee|geen flauw|nou nee)/.test(zin)) return "niet";
+    // Verder van achter naar voren: bij "ja, eh, nee" geldt het laatste woord.
     for (let i = tokens.length - 1; i >= 0; i--) {
-      if (JA_WOORDEN[tokens[i]]) return "gekend";
-      if (NEE_WOORDEN[tokens[i]]) return "niet";
+      const t = tokens[i];
+      if (JA_WOORDEN[t] || JA_KLANK.test(t)) return "gekend";
+      if (NEE_WOORDEN[t] || NEE_KLANK.test(t)) return "niet";
     }
+    if (tokens.length === 1 && NEE_RIJMT_OP[tokens[0]]) return "niet";
     return null;
   }
 
@@ -794,6 +845,7 @@
   }
 
   let recognition = null;        // lopende herkenner, of null
+  let recognitionListening = false; // herkenner heeft de microfoon ook echt
   let recognitionClosing = false; // vorige sessie sluit nog af
   let closeGuardTimer = null;    // vangnet als dat afsluiten blijft hangen
   let voiceActive = false;       // willen we luisteren?
@@ -825,6 +877,20 @@
     voiceHint.textContent = text || "";
   }
 
+  // Een kort piepje op het moment dat de microfoon echt luistert. In de auto
+  // kijk je niet naar het scherm, dus zonder dit is het gokken wanneer je
+  // mag antwoorden — en te vroeg praten is precies waarom een "nee" er soms
+  // niet doorkwam: het eerste stukje van het woord valt dan weg.
+  let lastListenCue = 0;
+  function playListenCue() {
+    const nu = Date.now();
+    // Android sluit een sessie uit zichzelf af en we starten dan opnieuw.
+    // Zonder deze drempel zou dat een reeks piepjes achter elkaar geven.
+    if (nu - lastListenCue < 1500) return;
+    lastListenCue = nu;
+    try { playTone("listen"); } catch (e) { /* geluid mag mislukken */ }
+  }
+
   function startRecognition() {
     if (!SpeechRecognitionCtor || recognition) return;
     // Een vorige sessie die nog aan het afsluiten is, heeft de herkenner van
@@ -839,33 +905,66 @@
     rec.lang = "nl-NL";
     rec.continuous = true;      // blijven luisteren, niet na één zin stoppen
     rec.interimResults = true;  // al reageren vóór de zin "af" is: scheelt een seconde
-    rec.maxAlternatives = 1;    // bij "ja"/"nee" voegt een tweede gok niets toe
+    // Meerdere gokken opvragen en ze allemaal bekijken. Juist bij "nee"
+    // staat de bedoelde tekst vaak nét niet bovenaan ("mee", "twee"), maar
+    // wel ergens in het lijstje. Dit is de goedkoopste winst die er is.
+    rec.maxAlternatives = 4;
     if (localVoiceReady) {
       try { rec.processLocally = true; } catch (e) {}
     }
 
     actedAnswerForIndex = [];
 
+    // start vuurt pas als de herkenner daadwerkelijk audio aanneemt; dat is
+    // het eerlijke moment voor het piepje én voor "Luistert" op het scherm.
+    rec.onstart = function () {
+      if (recognition !== rec) return; // al weer gestopt
+      recognitionListening = true;
+      logVoice("luistert");
+      playListenCue();
+      updateVoiceStatusText();
+    };
+
     rec.onresult = function (event) {
       voiceNetworkErrors = 0;
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const heard = String(event.results[i][0].transcript || "").trim();
-        const tokens = tokenize(heard);
-        const tooLong = tokens.length > MAX_ANTWOORD_WOORDEN;
-        const answer = (tokens.length && !tooLong) ? findAnswer(tokens) : null;
+        const res = event.results[i];
+        const alternatieven = [];
+        let answer = null;
+        let heard = "";
+        let tooLong = false;
+        // De eerste gok die een ja/nee oplevert wint — die staat het hoogst
+        // en is dus de waarschijnlijkste. De rest wordt alleen nog verzameld
+        // voor het logboek, zodat bij een gemist antwoord terug te zien is
+        // wat de herkenner er dan wél van maakte.
+        for (let a = 0; a < res.length; a++) {
+          const alt = res[a];
+          const text = String((alt && alt.transcript) || "").trim();
+          if (!text) continue;
+          alternatieven.push(text);
+          const tokens = tokenize(text);
+          if (!tokens.length) continue;
+          if (tokens.length > MAX_ANTWOORD_WOORDEN) {
+            if (a === 0) tooLong = true;
+            continue;
+          }
+          const gok = findAnswer(tokens);
+          if (gok && !answer) { answer = gok; heard = text; }
+        }
+        const gelogd = alternatieven.length ? alternatieven.join(" / ") : "(niets)";
         if (!answer) {
-          logVoice("gehoord: “" + heard + "” → " +
+          logVoice("gehoord: “" + gelogd + "” → " +
             (tooLong ? "te lang, genegeerd" : "geen ja/nee"));
           continue;
         }
         if (answer === actedAnswerForIndex[i]) continue; // al geteld
         actedAnswerForIndex[i] = answer;
         if (handleVoiceAnswer(answer)) {
-          logVoice("gehoord: “" + heard + "” → geteld als " +
+          logVoice("gehoord: “" + gelogd + "” → " + heard + " geteld als " +
             (answer === "gekend" ? "GEKEND" : "NIET GEKEND"));
           break;
         }
-        logVoice("gehoord: “" + heard + "” → buiten het antwoordvenster");
+        logVoice("gehoord: “" + gelogd + "” → buiten het antwoordvenster");
       }
     };
 
@@ -901,6 +1000,7 @@
 
     rec.onend = function () {
       logVoice("mic uit");
+      recognitionListening = false;
       if (recognition === rec) recognition = null;
       recognitionClosing = false; // het toestel heeft de herkenner weer vrij
       if (closeGuardTimer) { clearTimeout(closeGuardTimer); closeGuardTimer = null; }
@@ -949,6 +1049,7 @@
     if (voiceRestartTimer) { clearTimeout(voiceRestartTimer); voiceRestartTimer = null; }
     const rec = recognition;
     recognition = null;
+    recognitionListening = false;
     if (!rec) return;
     // onend bewust NIET weghalen: we moeten juist weten wanneer het toestel
     // de herkenner echt heeft losgelaten. Tot die tijd blokkeert
@@ -1029,7 +1130,9 @@
     }
     // De herkenner heeft na het starten even nodig voor hij echt luistert;
     // dat verschil hier laten zien in plaats van alvast "Luistert" beloven.
-    setVoiceHint(recognition ? "🎤 Luistert — zeg “ja” of “nee”" : "🎤 Microfoon start…");
+    // Pas bij zijn start-event (zelfde moment als het piepje) staat de
+    // microfoon er echt open voor.
+    setVoiceHint(recognitionListening ? "🎤 Luistert — zeg “ja” of “nee”" : "🎤 Microfoon start…");
   }
 
   // De microfoon gaat nu pas aan ná een fragment. Vraag de toestemming
@@ -1097,8 +1200,10 @@
       "“nee” (niet gekend) in plaats van rood/groen te tikken — handig in de auto. De " +
       "microfoon gaat pas aan ná het fragment en meteen weer uit zodra je antwoord " +
       "geteld is: tijdens het fragment zou de microfoon het fragment zelf als antwoord " +
-      "kunnen opvatten, en zou hij op Android het geluid onderbreken. Het scherm blijft " +
-      "aan zolang dit aan staat, en tikken blijft gewoon werken.";
+      "kunnen opvatten, en zou hij op Android het geluid onderbreken. Twee korte " +
+      "piepjes geven aan dat de microfoon echt luistert — antwoord daarná, want wat je " +
+      "vóór het piepje zegt hoort hij niet. Het scherm blijft aan zolang dit aan staat, " +
+      "en tikken blijft gewoon werken.";
     // Eerder aangezet? Dan meteen weer luisteren. De microfoontoestemming is
     // dan al gegeven, dus daar komt geen nieuwe vraag voor.
     if (state.voiceEnabled) setVoiceEnabled(true);
@@ -1212,6 +1317,7 @@
     const word = state.currentWord;
     fragmentFinished = false;
     voiceStartFailures = 0; // nieuw woord: de microfoon krijgt een schone kans
+    lastListenCue = 0;      // en hoe dan ook een piepje als hij straks luistert
     syncRecognition();      // microfoon uit zolang het fragment speelt
     resolvePlayableSrc(word.file).then(function (src) {
       const fromCache = src.indexOf("blob:") === 0;
@@ -1268,7 +1374,7 @@
     syncRecognition();       // nu pas de microfoon aanzetten
     updateVoiceStatusText(); // vanaf nu neemt de spraakbediening wél antwoord aan
     statusText.textContent = voiceActive
-      ? "Kende je dit woord? Zeg “ja” of “nee”, of tik rood/groen."
+      ? "Kende je dit woord? Zeg “ja” of “nee” na het piepje, of tik rood/groen."
       : "Kende je dit woord? Tik rood of groen.";
   });
 

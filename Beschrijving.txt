@@ -22,8 +22,17 @@ Hoe het werkt
      lopende spraakherkenner de audiofocus af van de speler, waardoor het
      fragment wegviel en het toestel bij elke sessie zijn eigen start- en
      stop-piepjes speelde.
-   - Alleen korte antwoorden tellen (hooguit drie woorden), zodat gepraat
-     in de auto niet per ongeluk een woord afvinkt.
+   - Twee korte, oplopende piepjes geven aan dat de microfoon echt open
+     staat; pas daarna wordt er geluisterd. Zonder dat signaal antwoord je
+     in de auto makkelijk te vroeg en valt het begin van je woord weg —
+     bij het korte "nee" scheelde dat een herkend antwoord.
+   - Alleen korte antwoorden tellen (hooguit vier woorden), zodat gepraat
+     in de auto niet per ongeluk een woord afvinkt. "Ik weet het niet" en
+     "geen idee" tellen als NIET GEKEND.
+   - De herkenner levert meerdere gokken per zin; die worden allemaal
+     bekeken. Vooral "nee" is kort en zacht en belandt vaak nét niet
+     bovenaan ("mee", "twee", "zee"). Staat zo'n rijmwoord er in z'n eentje,
+     dan telt het als "nee" — in het antwoordvenster zeg je niets anders.
    - Zolang spraakbediening aan staat tijdens een beurt blijft het scherm
      aan; anders valt de app in slaap en luistert er niets meer mee.
    - De microfoon staat alleen aan zolang de app open is en de knop groen
@@ -103,6 +112,10 @@ Daarom:
 - De browser kijkt uit zichzelf alleen bij het openen van de app of er een
   nieuwe sw.js is. De app controleert daarom ook zelf: elk uur, en zodra
   hij weer op de voorgrond komt (hooguit eens per kwartier).
+- sw.js wordt geregistreerd met updateViaCache: "none", zodat die controle
+  altijd echt bij de server langsgaat. Anders mocht de browser sw.js uit
+  zijn eigen http-cache beantwoorden en zag de app vlak na een nieuwe
+  versie bij het opstarten soms nog de oude.
 - Je voortgang en de gedownloade mp3's blijven bij een update staan: de
   mp3-cache is niet geversioneerd en alleen de oude app-schil wordt
   opgeruimd.

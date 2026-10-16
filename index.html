@@ -871,12 +871,15 @@
   // vertaalslag daarna bijhouden — wélke tekst de herkenner van jóuw "nee"
   // maakt. Die teksten worden in de oefenstand verzameld (zie verderop) en
   // hier geraadpleegd. Vorm: { gekend: {tekst: aantal}, niet: {tekst: aantal} }.
-  let learned = loadLearned(stored.voiceLearned);
 
   // Een geleerde sleutel is altijd genormaliseerde tekst van hooguit twee
   // woorden. Langer is nooit een losse ja/nee-klank maar een halve zin, en die
   // als "nee" laten gelden zou in de auto te veel gewoon gepraat opvangen.
+  // Moet boven het inlezen staan: loadLearned() gebruikt hem meteen, en een
+  // const die nog niet aan de beurt is geweest is niet te lezen.
   const MAX_LEARN_WOORDEN = 2;
+
+  let learned = loadLearned(stored.voiceLearned);
 
   function normalizeLearn(text) {
     const tokens = tokenize(text);

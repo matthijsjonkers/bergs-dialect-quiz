@@ -133,6 +133,19 @@
   }
   #trainModal button[hidden] { display: none; }
 
+  #aboutMeta {
+    font-size: .75rem; color: #999; margin: -.5rem 0 1rem; white-space: pre-line;
+    line-height: 1.45;
+  }
+  #aboutChanges h3 {
+    font-size: .8rem; color: #3a8; margin: 1.1rem 0 .35rem; font-weight: 600;
+  }
+  #aboutChanges h3:first-child { margin-top: 0; }
+  #aboutChanges ul { margin: 0; padding-left: 1.1rem; }
+  #aboutChanges li {
+    font-size: .82rem; line-height: 1.45; color: #ccc; margin-bottom: .35rem;
+  }
+
   #updateModal p { font-size: .9rem; line-height: 1.45; color: #ccc; margin: 0; }
   #updateNowBtn {
     background: #1e8a4c; color: #fff; border: 1px solid #2fb86b;
@@ -180,6 +193,7 @@
     <input id="importProgressInput" type="file" accept="application/json" hidden>
     <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
     <button id="trainVoiceBtn" hidden>🎤 Stem oefenen (leer de app jouw “ja” en “nee”)</button>
+    <button id="aboutBtn">ℹ️ Over deze app (wat is er nieuw)</button>
     <div id="voiceInfo" style="font-size:.8rem;color:#aaa;margin-top:.75rem;"></div>
     <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
     <div id="voiceLogInfo" style="font-size:.7rem;color:#888;margin-top:.75rem;white-space:pre-line;font-family:ui-monospace,Consolas,monospace;"></div>
@@ -217,6 +231,77 @@
        gedownloade fragmenten blijven gewoon staan.</p>
     <button id="updateNowBtn">Nu bijwerken</button>
     <button id="updateLaterBtn">Later</button>
+  </div>
+</div>
+
+<div id="aboutModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Over Dieje Lekt</h2>
+    <div id="aboutMeta">Laden…</div>
+    <div id="aboutChanges">
+      <h3>16 oktober 2026</h3>
+      <ul>
+        <li>Handsfree antwoorden gaat nu op de klánk van je stem in plaats van
+            op losse woorden. Dat werkt volledig op het toestel zelf — dus ook
+            zonder internet — en "nee" wordt niet langer als "mee" of "twee"
+            verstaan.</li>
+        <li>Nieuw onder ⚙: <b>Stem oefenen</b>. Zeg "ja" en "nee" allebei vijf
+            keer na het piepje; de app bewaart dan de klank van jouw stem. Met
+            de luistertest controleer je meteen of hij je goed verstaat.</li>
+        <li>Twee korte piepjes geven aan wanneer er naar je antwoord geluisterd
+            wordt.</li>
+        <li>Opgelost: de app startte soms niet meer op nadat je je stem geoefend
+            had.</li>
+        <li>Opgelost: de oefenteller telde één uitspraak soms meerdere keren.</li>
+      </ul>
+
+      <h3>11 oktober 2026</h3>
+      <ul>
+        <li>De microfoon luistert alleen nog in het antwoordvenster, niet meer
+            tijdens het fragment zelf — anders telde het woord in de opname mee
+            als jouw antwoord.</li>
+        <li>Opgelost: de spraakbediening bleef na het eerste antwoord hangen.</li>
+      </ul>
+
+      <h3>10 oktober 2026</h3>
+      <ul>
+        <li>Staat er een nieuwe versie klaar, dan vraagt de app het netjes en
+            installeert hij zichzelf na jouw akkoord in een paar seconden.</li>
+      </ul>
+
+      <h3>7 oktober 2026</h3>
+      <ul>
+        <li>Handsfree antwoorden met "ja" en "nee" toegevoegd (🎤), bedoeld voor
+            onderweg in de auto.</li>
+        <li>De fragmenten worden nu vanuit de pagina zelf gedownload, met een
+            voortgangsbalk bovenin — betrouwbaarder dan via de service worker.</li>
+      </ul>
+
+      <h3>1 oktober 2026</h3>
+      <ul>
+        <li>Je voortgang exporteren naar en importeren uit een bestand, zodat je
+            hem kunt bewaren of op een ander toestel verder kunt gaan.</li>
+      </ul>
+
+      <h3>30 september 2026</h3>
+      <ul>
+        <li>Fragmenten worden nog maar één keer gedownload en daarna uit de
+            offline-opslag afgespeeld.</li>
+        <li>Knop om het downloaden te forceren als de wifi-detectie het mis
+            heeft, plus diagnose-info onderin de instellingen.</li>
+        <li>Mislukte downloads worden niet meer stilletjes als "klaar"
+            gemeld.</li>
+      </ul>
+
+      <h3>Daarvoor</h3>
+      <ul>
+        <li>Live statistieken bovenin: hoeveel woorden goed, fout en nog
+            ongeoefend.</li>
+        <li>Eigen app-icoon en de naam "Dieje Lekt".</li>
+        <li>Offline te installeren als app op je telefoon.</li>
+      </ul>
+    </div>
+    <button id="aboutCloseBtn">Sluiten</button>
   </div>
 </div>
 
@@ -306,6 +391,10 @@
   const importProgressInput = document.getElementById("importProgressInput");
   const forceDownloadBtn = document.getElementById("forceDownloadBtn");
   const trainVoiceBtn = document.getElementById("trainVoiceBtn");
+  const aboutBtn = document.getElementById("aboutBtn");
+  const aboutModal = document.getElementById("aboutModal");
+  const aboutMeta = document.getElementById("aboutMeta");
+  const aboutCloseBtn = document.getElementById("aboutCloseBtn");
   const trainModal = document.getElementById("trainModal");
   const trainPrompt = document.getElementById("trainPrompt");
   const trainHeard = document.getElementById("trainHeard");
@@ -685,6 +774,7 @@
     channel.port1.onmessage = function (e) {
       activeVersion = e.data;
       updateDebugInfo();
+      renderAboutMeta();
     };
     sw.postMessage({ type: "GET_VERSION" }, [channel.port2]);
   }
@@ -2327,6 +2417,24 @@
   });
   closeSettingsBtn.addEventListener("click", function () {
     settingsModal.classList.add("hidden");
+  });
+
+  // De versie komt pas terug als de service worker antwoordt; daarom als
+  // losse functie, zodat dat antwoord het regeltje alsnog kan bijwerken.
+  function renderAboutMeta() {
+    aboutMeta.textContent =
+      "Quiz met " + WORDS.length + " fragmenten uit het Bergs dialect.\n" +
+      "Versie: " + (activeVersion || "onbekend") +
+      (waitingWorker ? " (update klaar om te installeren)" : "");
+  }
+
+  aboutBtn.addEventListener("click", function () {
+    askActiveVersion();
+    renderAboutMeta();
+    aboutModal.classList.remove("hidden");
+  });
+  aboutCloseBtn.addEventListener("click", function () {
+    aboutModal.classList.add("hidden");
   });
 
   trainVoiceBtn.addEventListener("click", function () {

@@ -76,9 +76,14 @@ Hoe het werkt
    versie beschikbaar — nu bijwerken?". Tik je op "Nu bijwerken", dan
    installeert en herstart hij zichzelf in een paar seconden. Zie
    "Bijwerken" verderop.
-6. Woorden die je als "niet gekend" markeert komen vaker terug in latere
+6. Onder ⚙ → "Over deze app" staat wat er in de laatste versies veranderd
+   is, met daarboven het aantal fragmenten en de actieve versie. Zo zie je
+   na het bijwerken meteen wat je erbij gekregen hebt. De lijst staat als
+   gewone tekst in index.html (aboutModal) en wordt met de hand aangevuld
+   bij een nieuwe wijziging.
+7. Woorden die je als "niet gekend" markeert komen vaker terug in latere
    beurten, zodat je vooral herhaalt wat je nog niet kent.
-7. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
+8. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
    Je voortgang wordt lokaal bewaard (blijft staan na het sluiten van de app).
 
 Techniek

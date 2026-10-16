@@ -1312,9 +1312,14 @@
   function learnFromTraining(label, teksten) {
     const ander = label === "gekend" ? "niet" : "gekend";
     const nieuw = [], overgeslagen = [], bekend = [];
+    // De herkenner levert meerdere gokken per ronde, en die vallen na het
+    // opschonen vaak samen ("ja", "Ja", "ja."). Zonder deze filter telde één
+    // keer "ja" zeggen als vier keer geoefend.
+    const gezien = {};
     teksten.forEach(function (tekst) {
       const sleutel = normalizeLearn(tekst);
-      if (!sleutel) return;
+      if (!sleutel || gezien[sleutel]) return;
+      gezien[sleutel] = true;
       // Hoort de ingebouwde lijst hier juist het ándere antwoord in, of is
       // deze klank al voor het andere antwoord geoefend, dan zou aanleren je
       // "ja" en "nee" door elkaar laten lopen. Zulke gokken overslaan.

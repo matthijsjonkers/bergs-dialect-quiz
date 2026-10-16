@@ -25,7 +25,11 @@ Hoe het werkt
    - Twee korte, oplopende piepjes geven aan dat de microfoon echt open
      staat; pas daarna wordt er geluisterd. Zonder dat signaal antwoord je
      in de auto makkelijk te vroeg en valt het begin van je woord weg —
-     bij het korte "nee" scheelde dat een herkend antwoord.
+     bij het korte "nee" scheelde dat een herkend antwoord. Dat piepje komt
+     één keer per woord: Android sluit een luistersessie bij stilte uit
+     zichzelf af en de app start dan meteen een nieuwe, en elke start gaf
+     eerder opnieuw een piepje (om de 3 à 4 seconden eentje, zolang je
+     niets zei).
    - Alleen korte antwoorden tellen (hooguit vier woorden), zodat gepraat
      in de auto niet per ongeluk een woord afvinkt. "Ik weet het niet" en
      "geen idee" tellen als NIET GEKEND.
@@ -33,6 +37,20 @@ Hoe het werkt
      bekeken. Vooral "nee" is kort en zacht en belandt vaak nét niet
      bovenaan ("mee", "twee", "zee"). Staat zo'n rijmwoord er in z'n eentje,
      dan telt het als "nee" — in het antwoordvenster zeg je niets anders.
+   - Onder ⚙ staat "Stem oefenen": daarmee leer je de app jouw eigen "ja"
+     en "nee". De herkenner zelf is niet bij te stellen (de browser stuurt
+     het geluid naar een vast model en geeft alleen tekst terug), maar de
+     app kan wél onthouden wát hij van jouw stem maakt. Je zegt het woord
+     vijf keer na het piepje; elke tekst die de herkenner er dan van maakt
+     ("m'n", "nihil", "mee") telt voortaan als dat antwoord. Dat kan juist
+     hier, omdat er in het antwoordvenster maar twee antwoorden bestaan.
+     Klanken die van huis uit al het ándere antwoord betekenen, of die al
+     voor het andere antwoord geoefend zijn, worden overgeslagen; anders
+     zouden "ja" en "nee" door elkaar gaan lopen. Het overzicht van wat er
+     geleerd is staat in hetzelfde venster en kan daar gewist worden. De
+     geoefende uitspraken gaan mee in het export/import-bestand.
+   - Oefen bij voorkeur in de auto met motor en ventilatie aan: dan leert
+     de app precies de omstandigheden waarin je straks antwoordt.
    - Zolang spraakbediening aan staat tijdens een beurt blijft het scherm
      aan; anders valt de app in slaap en luistert er niets meer mee.
    - De microfoon staat alleen aan zolang de app open is en de knop groen

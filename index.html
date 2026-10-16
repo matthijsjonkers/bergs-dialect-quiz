@@ -118,6 +118,21 @@
   }
   #swWarning:empty { display: none; }
 
+  #trainModal p { font-size: .8rem; line-height: 1.45; color: #aaa; margin: 0; }
+  #trainPrompt {
+    font-size: 1.25rem; font-weight: 600; text-align: center;
+    margin-top: 1rem; min-height: 1.6rem;
+  }
+  #trainHeard {
+    font-size: .8rem; color: #aaa; text-align: center; margin-top: .4rem;
+    min-height: 2.4rem; line-height: 1.4;
+  }
+  #trainLearned {
+    font-size: .75rem; color: #999; margin-top: 1rem; white-space: pre-line;
+    line-height: 1.45;
+  }
+  #trainModal button[hidden] { display: none; }
+
   #updateModal p { font-size: .9rem; line-height: 1.45; color: #ccc; margin: 0; }
   #updateNowBtn {
     background: #1e8a4c; color: #fff; border: 1px solid #2fb86b;
@@ -164,11 +179,32 @@
     <button id="importProgressBtn">Voortgang importeren uit bestand</button>
     <input id="importProgressInput" type="file" accept="application/json" hidden>
     <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
+    <button id="trainVoiceBtn" hidden>🎤 Stem oefenen (leer de app jouw “ja” en “nee”)</button>
     <div id="voiceInfo" style="font-size:.8rem;color:#aaa;margin-top:.75rem;"></div>
     <div id="debugInfo" style="font-size:.75rem;color:#999;margin-top:.75rem; white-space:pre-line;"></div>
     <div id="voiceLogInfo" style="font-size:.7rem;color:#888;margin-top:.75rem;white-space:pre-line;font-family:ui-monospace,Consolas,monospace;"></div>
     <div id="swWarning"></div>
     <button id="closeSettingsBtn">Sluiten</button>
+  </div>
+</div>
+
+<div id="trainModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Stem oefenen</h2>
+    <p id="trainIntro">De spraakherkenner zelf is niet bij te stellen, maar de app
+       kan wel onthouden wát hij van jouw “ja” en “nee” maakt. Zeg het woord een
+       paar keer na het piepje; alles wat de herkenner er dan van maakt telt
+       voortaan als dat antwoord. Doe dit bij voorkeur in de auto, met motor en
+       ventilatie aan — dan leert hij precies de omstandigheden waarin je
+       antwoordt.</p>
+    <div id="trainPrompt"></div>
+    <div id="trainHeard"></div>
+    <button id="trainNeeBtn">“Nee” oefenen (5 keer)</button>
+    <button id="trainJaBtn">“Ja” oefenen (5 keer)</button>
+    <button id="trainStopBtn" hidden>Stoppen</button>
+    <div id="trainLearned"></div>
+    <button id="trainResetBtn">Geoefende uitspraken wissen</button>
+    <button id="trainCloseBtn">Sluiten</button>
   </div>
 </div>
 
@@ -234,7 +270,10 @@
       pauseMs: state.pauseMs,
       voiceEnabled: state.voiceEnabled,
       lastResults: state.lastResults,
-      lastRoundCounts: state.lastRoundCounts
+      lastRoundCounts: state.lastRoundCounts,
+      // Zelf aangeleerde uitspraken van "ja"/"nee"; zie de spraaksectie.
+      // Wordt pas verderop gevuld, maar saveState() draait nooit eerder.
+      voiceLearned: learned
     }));
   }
 
@@ -263,6 +302,16 @@
   const importProgressBtn = document.getElementById("importProgressBtn");
   const importProgressInput = document.getElementById("importProgressInput");
   const forceDownloadBtn = document.getElementById("forceDownloadBtn");
+  const trainVoiceBtn = document.getElementById("trainVoiceBtn");
+  const trainModal = document.getElementById("trainModal");
+  const trainPrompt = document.getElementById("trainPrompt");
+  const trainHeard = document.getElementById("trainHeard");
+  const trainNeeBtn = document.getElementById("trainNeeBtn");
+  const trainJaBtn = document.getElementById("trainJaBtn");
+  const trainStopBtn = document.getElementById("trainStopBtn");
+  const trainResetBtn = document.getElementById("trainResetBtn");
+  const trainCloseBtn = document.getElementById("trainCloseBtn");
+  const trainLearned = document.getElementById("trainLearned");
   const debugInfo = document.getElementById("debugInfo");
   const voiceLogInfo = document.getElementById("voiceLogInfo");
   const pauseInput = document.getElementById("pauseInput");
@@ -816,17 +865,82 @@
       .filter(Boolean);
   }
 
-  function findAnswer(tokens) {
+  // ---- Zelf aangeleerde uitspraken ------------------------------------
+  // De spraakherkenner zelf is niet te trainen: de browser stuurt het geluid
+  // naar een vast model en geeft alleen tekst terug. Wat wél kan is de
+  // vertaalslag daarna bijhouden — wélke tekst de herkenner van jóuw "nee"
+  // maakt. Die teksten worden in de oefenstand verzameld (zie verderop) en
+  // hier geraadpleegd. Vorm: { gekend: {tekst: aantal}, niet: {tekst: aantal} }.
+  let learned = loadLearned(stored.voiceLearned);
+
+  // Een geleerde sleutel is altijd genormaliseerde tekst van hooguit twee
+  // woorden. Langer is nooit een losse ja/nee-klank maar een halve zin, en die
+  // als "nee" laten gelden zou in de auto te veel gewoon gepraat opvangen.
+  const MAX_LEARN_WOORDEN = 2;
+
+  function normalizeLearn(text) {
+    const tokens = tokenize(text);
+    if (!tokens.length || tokens.length > MAX_LEARN_WOORDEN) return "";
+    return tokens.join(" ");
+  }
+
+  function loadLearned(raw) {
+    const out = { gekend: {}, niet: {} };
+    if (!raw || typeof raw !== "object") return out;
+    ["gekend", "niet"].forEach(function (label) {
+      const src = raw[label];
+      if (!src || typeof src !== "object") return;
+      Object.keys(src).forEach(function (key) {
+        const sleutel = normalizeLearn(key);
+        if (!sleutel) return;
+        const n = parseInt(src[key], 10);
+        out[label][sleutel] = (out[label][sleutel] || 0) + (n > 0 ? n : 1);
+      });
+    });
+    return out;
+  }
+
+  // Dezelfde tekst in beide lijsten betekent dat hij niets onderscheidt —
+  // dan maar niets ermee doen in plaats van gokken. Bij het aanleren wordt
+  // dat al tegengehouden, maar een geïmporteerd bestand kan het bevatten.
+  function learnedAnswer(text) {
+    if (!text) return null;
+    const ja = learned.gekend[text] || 0;
+    const nee = learned.niet[text] || 0;
+    if (ja && nee) return null;
+    if (ja) return "gekend";
+    if (nee) return "niet";
+    return null;
+  }
+
+  function learnedCount() {
+    return Object.keys(learned.gekend).length + Object.keys(learned.niet).length;
+  }
+
+  // skipLearned: alleen de ingebouwde lijsten raadplegen. Nodig bij het
+  // aanleren, om te zien of een klank van huis uit al het ándere antwoord
+  // betekent — dan moet hij juist níet geleerd worden.
+  function findAnswer(tokens, skipLearned) {
     if (!tokens.length) return null;
     const zin = tokens.join(" ");
     // Hele zinnetjes eerst: in "weet ik niet" zit geen los "nee", maar het
     // antwoord is overduidelijk.
     if (/(weet (ik |het )?niet|geen idee|geen flauw|nou nee)/.test(zin)) return "niet";
+    // Een geleerde uitspraak kan uit twee woorden bestaan ("neeë hè"), dus
+    // eerst de hele zin proberen voor we hem in losse woorden knippen.
+    if (!skipLearned) {
+      const geleerdeZin = learnedAnswer(zin);
+      if (geleerdeZin) return geleerdeZin;
+    }
     // Verder van achter naar voren: bij "ja, eh, nee" geldt het laatste woord.
     for (let i = tokens.length - 1; i >= 0; i--) {
       const t = tokens[i];
       if (JA_WOORDEN[t] || JA_KLANK.test(t)) return "gekend";
       if (NEE_WOORDEN[t] || NEE_KLANK.test(t)) return "niet";
+      if (!skipLearned) {
+        const geleerd = learnedAnswer(t);
+        if (geleerd) return geleerd;
+      }
     }
     if (tokens.length === 1 && NEE_RIJMT_OP[tokens[0]]) return "niet";
     return null;
@@ -861,6 +975,7 @@
   let actedAnswerForIndex = [];
   let voiceNetworkErrors = 0;
   let localVoiceReady = false;  // herkenning kan op het toestel zelf draaien
+  let trainingActive = false;   // oefenstand: die gebruikt de microfoon zelf
 
   // Chrome 139+ kan Nederlands op het toestel zelf herkennen; dan werkt de
   // spraakbediening óók zonder internet, net als de rest van de app. Alleen
@@ -881,13 +996,17 @@
   // kijk je niet naar het scherm, dus zonder dit is het gokken wanneer je
   // mag antwoorden — en te vroeg praten is precies waarom een "nee" er soms
   // niet doorkwam: het eerste stukje van het woord valt dan weg.
-  let lastListenCue = 0;
+  //
+  // Eén piepje per beurt, geen tijddrempel. Android sluit een luistersessie
+  // bij stilte uit zichzelf af ("no-speech", na een seconde of drie) en wij
+  // starten dan meteen opnieuw; elke start gaf dus opnieuw een piepje, en dat
+  // is wat je als een piepje om de 3 à 4 seconden hoorde zolang je niets zei.
+  // Het piepje betekent "je mag nu antwoorden" en dat blijft gelden, ook als
+  // de herkenner er ondertussen een nieuwe sessie voor nodig heeft.
+  let listenCueDone = false;
   function playListenCue() {
-    const nu = Date.now();
-    // Android sluit een sessie uit zichzelf af en we starten dan opnieuw.
-    // Zonder deze drempel zou dat een reeks piepjes achter elkaar geven.
-    if (nu - lastListenCue < 1500) return;
-    lastListenCue = nu;
+    if (listenCueDone) return;
+    listenCueDone = true;
     try { playTone("listen"); } catch (e) { /* geluid mag mislukken */ }
   }
 
@@ -1096,6 +1215,7 @@
   // op: voiceGateOpen() weigerde dat antwoord toch al.
   function voiceWindowOpen() {
     return voiceActive &&
+      !trainingActive && // twee herkenners tegelijk gaat niet: oefenen gaat voor
       document.visibilityState === "visible" &&
       state.running &&
       voiceGateOpen();
@@ -1148,6 +1268,211 @@
       .catch(function () { /* geweigerd: onerror van de herkenner meldt het */ });
   }
 
+  // ---------------------------------------------------------------------
+  // Oefenstand: de app jouw "ja" en "nee" leren
+  // ---------------------------------------------------------------------
+  // Het model in de browser is niet te trainen, dus leren we de laag erboven:
+  // de app vraagt je het woord een paar keer te zeggen en bewaart élke tekst
+  // die de herkenner er dan van maakt ("mee", "nihil", "m'n"). Die teksten
+  // tellen daarna in het antwoordvenster als dat antwoord. Dat werkt juist
+  // hier zo goed omdat er maar twee antwoorden bestaan: een verkeerd
+  // verstaan woord is in dat venster vrijwel altijd nog steeds jouw "nee".
+  const TRAIN_ROUNDS = 5;
+  const TRAIN_MAX_ALTERNATIVES = 4; // meer gokken is meer ruis dan winst
+  const TRAIN_LISTEN_MS = 7000;     // zo lang wachten op een antwoord per ronde
+
+  let trainTarget = null;      // "gekend" | "niet"
+  let trainRemaining = 0;
+  let trainRec = null;
+  let trainTimer = null;       // luistertimeout óf de pauze tussen twee rondes
+
+  function trainWord(label) {
+    return label === "gekend" ? "ja" : "nee";
+  }
+
+  function renderLearned() {
+    const regels = [];
+    ["niet", "gekend"].forEach(function (label) {
+      const teksten = Object.keys(learned[label]).sort(function (a, b) {
+        return learned[label][b] - learned[label][a] || a.localeCompare(b);
+      });
+      if (!teksten.length) return;
+      regels.push("Telt als “" + trainWord(label) + "”: " + teksten.map(function (t) {
+        return t + " (" + learned[label][t] + "×)";
+      }).join(", "));
+    });
+    trainLearned.textContent = regels.length
+      ? regels.join("\n")
+      : "Nog niets geoefend. De ingebouwde lijst met ja/nee-klanken werkt gewoon al.";
+  }
+
+  // Wat de herkenner van één geoefende uitspraak maakte opslaan. Geeft een
+  // regel tekst terug voor op het scherm: in de auto wil je meteen zien of er
+  // iets bijgeleerd is of dat je het nog eens moet zeggen.
+  function learnFromTraining(label, teksten) {
+    const ander = label === "gekend" ? "niet" : "gekend";
+    const nieuw = [], overgeslagen = [], bekend = [];
+    teksten.forEach(function (tekst) {
+      const sleutel = normalizeLearn(tekst);
+      if (!sleutel) return;
+      // Hoort de ingebouwde lijst hier juist het ándere antwoord in, of is
+      // deze klank al voor het andere antwoord geoefend, dan zou aanleren je
+      // "ja" en "nee" door elkaar laten lopen. Zulke gokken overslaan.
+      if (findAnswer(tokenize(sleutel), true) === ander || learned[ander][sleutel]) {
+        overgeslagen.push(sleutel);
+        return;
+      }
+      const alBekend = !!learned[label][sleutel] ||
+        findAnswer(tokenize(sleutel), true) === label;
+      learned[label][sleutel] = (learned[label][sleutel] || 0) + 1;
+      (alBekend ? bekend : nieuw).push(sleutel);
+    });
+    saveState();
+    renderLearned();
+    logVoice("geoefend (" + trainWord(label) + "): " + teksten.join(" / "));
+
+    const delen = [];
+    if (nieuw.length) delen.push("bijgeleerd: " + nieuw.join(", "));
+    if (bekend.length) delen.push("al bekend: " + bekend.join(", "));
+    if (overgeslagen.length) {
+      delen.push("overgeslagen (klinkt als “" + trainWord(ander) + "”): " + overgeslagen.join(", "));
+    }
+    if (!delen.length) return "Gehoord: “" + teksten[0] + "” — te lang om als los antwoord te leren.";
+    return "Gehoord: “" + teksten[0] + "” → " + delen.join(" · ");
+  }
+
+  function trainListen() {
+    const rec = new SpeechRecognitionCtor();
+    rec.lang = "nl-NL";
+    rec.continuous = false;     // één uitspraak per ronde is precies wat we willen
+    rec.interimResults = false; // hier telt de definitieve tekst, niet de snelste
+    rec.maxAlternatives = 6;    // juist de alternatieven zijn hier de opbrengst
+    if (localVoiceReady) {
+      try { rec.processLocally = true; } catch (e) {}
+    }
+
+    let afgehandeld = false;
+    const rondeKlaar = function (melding) {
+      if (afgehandeld) return;
+      afgehandeld = true;
+      if (trainTimer) { clearTimeout(trainTimer); trainTimer = null; }
+      if (melding) trainHeard.textContent = melding;
+      try { rec.abort(); } catch (e) { /* onend regelt de volgende ronde */ }
+      // Vangnet: normaal brengt onend ons naar de volgende ronde, maar blijft
+      // die onverhoopt uit, dan zou het oefenen hier stilvallen.
+      setTimeout(function () {
+        if (!trainingActive || trainRec !== rec) return;
+        trainRec = null;
+        trainRemaining -= 1;
+        if (trainTimer) clearTimeout(trainTimer);
+        trainTimer = setTimeout(trainNextRound, 100);
+      }, 2500);
+    };
+
+    rec.onstart = function () {
+      // Het piepje pas hier, net als in de quiz: dit is het eerlijke moment
+      // waarop de microfoon echt openstaat. Zo oefen je bovendien met precies
+      // dezelfde timing als tijdens een echte beurt.
+      try { playTone("listen"); } catch (e) {}
+      trainHeard.textContent = "Luistert…";
+      trainTimer = setTimeout(function () {
+        trainTimer = null;
+        rondeKlaar("Niets gehoord — zeg het iets luider, vlak na het piepje.");
+      }, TRAIN_LISTEN_MS);
+    };
+
+    rec.onresult = function (event) {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (!res.isFinal) continue;
+        const teksten = [];
+        for (let a = 0; a < res.length && teksten.length < TRAIN_MAX_ALTERNATIVES; a++) {
+          const tekst = String((res[a] && res[a].transcript) || "").trim();
+          if (tekst) teksten.push(tekst);
+        }
+        if (!teksten.length) continue;
+        rondeKlaar(learnFromTraining(trainTarget, teksten));
+        return;
+      }
+    };
+
+    rec.onerror = function (event) {
+      const err = event && event.error;
+      logVoice("oefenen, fout: " + (err || "onbekend"));
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        stopTraining("Geen toegang tot de microfoon — geef de app toestemming in de browserinstellingen.");
+      } else if (err === "audio-capture") {
+        stopTraining("Geen microfoon beschikbaar — gebruikt een andere app hem misschien?");
+      } else if (err === "network") {
+        stopTraining("Oefenen lukt hier niet zonder internet: de browser moet het geluid opsturen.");
+      } else if (err === "no-speech") {
+        rondeKlaar("Niets gehoord — zeg het iets luider, vlak na het piepje.");
+      } else {
+        rondeKlaar("Er ging iets mis (" + (err || "onbekend") + ") — nog een keer.");
+      }
+    };
+
+    rec.onend = function () {
+      if (trainTimer) { clearTimeout(trainTimer); trainTimer = null; }
+      trainRec = null;
+      if (!trainingActive) return;
+      trainRemaining -= 1;
+      // Even wachten: je moet kunnen lezen wat er gehoord is, en het toestel
+      // moet de herkenner eerst echt loslaten voor de volgende ronde.
+      trainTimer = setTimeout(trainNextRound, 1200);
+    };
+
+    try {
+      rec.start();
+      trainRec = rec;
+      trainPrompt.textContent = "Zeg “" + trainWord(trainTarget) + "” na het piepje (" +
+        (TRAIN_ROUNDS - trainRemaining + 1) + " van " + TRAIN_ROUNDS + ")";
+    } catch (e) {
+      stopTraining("De microfoon kwam niet vrij — sluit dit venster en probeer het zo nog eens.");
+    }
+  }
+
+  function trainNextRound() {
+    trainTimer = null;
+    if (!trainingActive) return;
+    if (trainRemaining <= 0) {
+      stopTraining("Klaar. Je kunt dit zo vaak herhalen als je wil — elke ronde maakt de herkenning scherper.");
+      return;
+    }
+    trainListen();
+  }
+
+  function startTraining(label) {
+    if (!SpeechRecognitionCtor || trainingActive) return;
+    trainingActive = true;
+    trainTarget = label;
+    trainRemaining = TRAIN_ROUNDS;
+    stopRecognition();  // de quiz-microfoon moet nu los
+    primeMicPermission();
+    trainNeeBtn.hidden = true;
+    trainJaBtn.hidden = true;
+    trainStopBtn.hidden = false;
+    trainPrompt.textContent = "Maak je klaar…";
+    trainHeard.textContent = "";
+    // Niet meteen starten: de quiz-herkenner (als die net nog aanstond) heeft
+    // een moment nodig om de microfoon vrij te geven.
+    trainTimer = setTimeout(trainNextRound, 500);
+  }
+
+  function stopTraining(melding) {
+    if (trainTimer) { clearTimeout(trainTimer); trainTimer = null; }
+    trainingActive = false;
+    trainRemaining = 0;
+    const rec = trainRec;
+    trainRec = null;
+    if (rec) { try { rec.abort(); } catch (e) {} }
+    trainNeeBtn.hidden = false;
+    trainJaBtn.hidden = false;
+    trainStopBtn.hidden = true;
+    trainPrompt.textContent = "";
+    if (melding) trainHeard.textContent = melding;
+  }
+
   function setVoiceEnabled(on) {
     state.voiceEnabled = !!on;
     voiceActive = state.voiceEnabled;
@@ -1188,6 +1513,7 @@
 
   if (SpeechRecognitionCtor) {
     voiceBtn.hidden = false;
+    trainVoiceBtn.hidden = false;
     voiceBtn.addEventListener("click", function () {
       const on = !voiceActive;
       // Alleen bij een bewuste tik toestemming vragen — niet bij elke start
@@ -1202,8 +1528,10 @@
       "geteld is: tijdens het fragment zou de microfoon het fragment zelf als antwoord " +
       "kunnen opvatten, en zou hij op Android het geluid onderbreken. Twee korte " +
       "piepjes geven aan dat de microfoon echt luistert — antwoord daarná, want wat je " +
-      "vóór het piepje zegt hoort hij niet. Het scherm blijft aan zolang dit aan staat, " +
-      "en tikken blijft gewoon werken.";
+      "vóór het piepje zegt hoort hij niet. Dat piepje komt één keer per woord; blijf je " +
+      "stil, dan luistert hij gewoon door. Het scherm blijft aan zolang dit aan staat, " +
+      "en tikken blijft gewoon werken. Wordt je “nee” vaak gemist, oefen hem dan hieronder " +
+      "in — de app leert dan wat de herkenner van jóuw stem maakt.";
     // Eerder aangezet? Dan meteen weer luisteren. De microfoontoestemming is
     // dan al gegeven, dus daar komt geen nieuwe vraag voor.
     if (state.voiceEnabled) setVoiceEnabled(true);
@@ -1317,7 +1645,7 @@
     const word = state.currentWord;
     fragmentFinished = false;
     voiceStartFailures = 0; // nieuw woord: de microfoon krijgt een schone kans
-    lastListenCue = 0;      // en hoe dan ook een piepje als hij straks luistert
+    listenCueDone = false;  // en hoe dan ook één piepje als hij straks luistert
     syncRecognition();      // microfoon uit zolang het fragment speelt
     resolvePlayableSrc(word.file).then(function (src) {
       const fromCache = src.indexOf("blob:") === 0;
@@ -1476,6 +1804,7 @@
     debugInfo.textContent =
       "Versie: " + (activeVersion || "onbekend") + (waitingWorker ? " (update klaar om te installeren)" : "") + "\n" +
       "Spraakherkenning: " + voiceMode + "\n" +
+      "Geoefende uitspraken: " + learnedCount() + "\n" +
       "Woorden: " + WORDS.length + "\n" +
       "Echt in offline-opslag: " + cached + "\n" +
       "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +
@@ -1493,6 +1822,32 @@
     settingsModal.classList.add("hidden");
   });
 
+  trainVoiceBtn.addEventListener("click", function () {
+    renderLearned();
+    trainPrompt.textContent = "";
+    trainHeard.textContent = "";
+    trainModal.classList.remove("hidden");
+  });
+  trainNeeBtn.addEventListener("click", function () { startTraining("niet"); });
+  trainJaBtn.addEventListener("click", function () { startTraining("gekend"); });
+  trainStopBtn.addEventListener("click", function () { stopTraining("Gestopt."); });
+  trainCloseBtn.addEventListener("click", function () {
+    stopTraining("");
+    trainModal.classList.add("hidden");
+    // De quiz-microfoon mocht tijdens het oefenen niet aan; nu weer de stand
+    // aannemen die bij het moment hoort.
+    syncRecognition();
+    updateVoiceStatusText();
+  });
+  trainResetBtn.addEventListener("click", function () {
+    if (!learnedCount()) return;
+    if (!confirm("Alle " + learnedCount() + " geoefende uitspraken wissen? De ingebouwde ja/nee-herkenning blijft gewoon werken.")) return;
+    learned = { gekend: {}, niet: {} };
+    saveState();
+    renderLearned();
+    trainHeard.textContent = "Gewist.";
+  });
+
   resetProgressBtn.addEventListener("click", function () {
     state.lastResults = {};
     state.lastRoundCounts = null;
@@ -1506,7 +1861,8 @@
       type: "bergs-quiz-voortgang",
       exportedAt: new Date().toISOString(),
       lastResults: state.lastResults,
-      lastRoundCounts: state.lastRoundCounts
+      lastRoundCounts: state.lastRoundCounts,
+      voiceLearned: learned
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -1544,6 +1900,12 @@
       if (!confirm("Dit vervangt je huidige voortgang door de " + count + " woorden uit dit bestand. Doorgaan?")) return;
       state.lastResults = data.lastResults;
       state.lastRoundCounts = data.lastRoundCounts || null;
+      // Geoefende uitspraken alleen overnemen als het bestand ze bevat; een
+      // oudere export zou je oefenwerk anders wissen.
+      if (data.voiceLearned) {
+        learned = loadLearned(data.voiceLearned);
+        renderLearned();
+      }
       saveState();
       updateScoreOverview();
       settingsModal.classList.add("hidden");

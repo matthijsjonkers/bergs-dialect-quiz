@@ -15,50 +15,63 @@ Hoe het werkt
 4. 🎤 zet spraakbediening aan (handsfree, bedoeld voor in de auto): in
    plaats van tikken zeg je "ja" (gekend) of "nee" (niet gekend). Tikken
    blijft daarnaast gewoon werken, ook tijdens het fragment.
-   - De microfoon gaat pas aan ná het fragment en meteen weer uit zodra je
-     antwoord geteld is. Twee redenen: via de autospeakers hoort de
-     microfoon het fragment zelf, en een "ja" of "nee" in de uitgesproken
-     betekenis zou dan als jouw antwoord doorgaan; én op Android pakt een
-     lopende spraakherkenner de audiofocus af van de speler, waardoor het
-     fragment wegviel en het toestel bij elke sessie zijn eigen start- en
-     stop-piepjes speelde.
-   - Twee korte, oplopende piepjes geven aan dat de microfoon echt open
-     staat; pas daarna wordt er geluisterd. Zonder dat signaal antwoord je
-     in de auto makkelijk te vroeg en valt het begin van je woord weg —
-     bij het korte "nee" scheelde dat een herkend antwoord. Dat piepje komt
-     één keer per woord: Android sluit een luistersessie bij stilte uit
-     zichzelf af en de app start dan meteen een nieuwe, en elke start gaf
-     eerder opnieuw een piepje (om de 3 à 4 seconden eentje, zolang je
-     niets zei).
-   - Alleen korte antwoorden tellen (hooguit vier woorden), zodat gepraat
-     in de auto niet per ongeluk een woord afvinkt. "Ik weet het niet" en
-     "geen idee" tellen als NIET GEKEND.
-   - De herkenner levert meerdere gokken per zin; die worden allemaal
-     bekeken. Vooral "nee" is kort en zacht en belandt vaak nét niet
-     bovenaan ("mee", "twee", "zee"). Staat zo'n rijmwoord er in z'n eentje,
-     dan telt het als "nee" — in het antwoordvenster zeg je niets anders.
-   - Onder ⚙ staat "Stem oefenen": daarmee leer je de app jouw eigen "ja"
-     en "nee". De herkenner zelf is niet bij te stellen (de browser stuurt
-     het geluid naar een vast model en geeft alleen tekst terug), maar de
-     app kan wél onthouden wát hij van jouw stem maakt. Je zegt het woord
-     vijf keer na het piepje; elke tekst die de herkenner er dan van maakt
-     ("m'n", "nihil", "mee") telt voortaan als dat antwoord. Dat kan juist
-     hier, omdat er in het antwoordvenster maar twee antwoorden bestaan.
-     Klanken die van huis uit al het ándere antwoord betekenen, of die al
-     voor het andere antwoord geoefend zijn, worden overgeslagen; anders
-     zouden "ja" en "nee" door elkaar gaan lopen. Het overzicht van wat er
-     geleerd is staat in hetzelfde venster en kan daar gewist worden. De
-     geoefende uitspraken gaan mee in het export/import-bestand.
-   - Oefen bij voorkeur in de auto met motor en ventilatie aan: dan leert
-     de app precies de omstandigheden waarin je straks antwoordt.
+   - De app luistert niet naar wélk woord je zegt, maar naar hoe het
+     klinkt. Onder ⚙ → "Stem oefenen" neem je allebei de antwoorden vijf
+     keer op. Daarna vergelijkt de app elke uitspraak met die opnames en
+     kiest hij de klank die er het dichtst bij ligt. Lijkt het niet
+     duidelijk genoeg op één van de twee, dan gebeurt er niets — liever
+     een keer niets dan een verkeerd geteld antwoord.
+     Waarom zo: de woordherkenner van de browser moet er een bestaand
+     Nederlands woord van maken, en verstond "nee" steeds als "mee",
+     "twee" of "m'n" — het is één korte, zachte lettergreep die op van
+     alles rijmt. Dat hele woord hoeft hier helemaal niet: er bestaan maar
+     twee antwoorden, en twee klanken uit elkaar houden is veel
+     makkelijker dan ze benoemen. De aa van "ja" en de ee van "nee" liggen
+     akoestisch ver uit elkaar, ook met motorgeronk eroverheen.
+   - Dit draait helemaal op het toestel zelf: het werkt dus ook zonder
+     internet, en er gaat geen geluid de deur uit.
+   - Er wordt pas naar een antwoord geluisterd ná het fragment: via de
+     autospeakers hoort de microfoon het fragment zelf, en een "ja" of
+     "nee" in de uitgesproken betekenis zou dan als jouw antwoord
+     doorgaan.
+   - Twee korte, oplopende piepjes geven aan dat er geluisterd wordt;
+     antwoord daarná. De eerste vier tienden van een seconde erna hoort de
+     app nog even niets — anders zou hij zijn eigen piepje als antwoord
+     opvatten. Eén piepje per woord; blijf je stil, dan luistert hij
+     gewoon door.
+   - Praat je langer door, dan telt dat niet mee: een antwoord is kort en
+     daarna is het even stil. Alles wat na anderhalve seconde nog
+     doorloopt wordt genegeerd, zodat gewoon gepraat in de auto geen woord
+     afvinkt.
+   - In "Stem oefenen" zit ook een luistertest: die doet precies wat de
+     quiz doet, maar zonder gevolgen voor je voortgang, en laat de cijfers
+     zien (hoeveel procent het op jouw "ja" en op jouw "nee" lijkt). Doe
+     die test voordat je erop gaat vertrouwen.
+   - Oefen in de auto met motor en ventilatie aan: de app vergelijkt
+     straks met precies deze opnames, dus hoe meer ze lijken op het moment
+     waarop je antwoordt, hoe scherper de herkenning. Een opname die meer
+     op het ándere antwoord lijkt wordt overgeslagen — anders gaan "ja" en
+     "nee" door elkaar lopen.
+   - Van een opname wordt alleen het klankprofiel bewaard (hoeveel geluid
+     er in welke frequentieband zit), geen geluidsfragment. Het blijft op
+     je toestel staan en gaat mee in het export/import-bestand — maar
+     alleen van je eigen stem: een bestand van iemand anders maakt de
+     herkenning juist slechter.
+   - Zolang er nog geen drie opnames per antwoord zijn, valt de app terug
+     op de woordherkenner van de browser. Die heeft meestal internet nodig
+     en verstaat vooral "nee" vaak verkeerd; eerder aangeleerde teksten
+     blijven daar gewoon gelden. Wis je je opnames, dan werkt de app weer
+     zo.
    - Zolang spraakbediening aan staat tijdens een beurt blijft het scherm
      aan; anders valt de app in slaap en luistert er niets meer mee.
-   - De microfoon staat alleen aan zolang de app open is en de knop groen
-     is; de aan/uit-stand wordt onthouden.
+   - De microfoon staat open zolang de app open is, de knop groen is en er
+     een beurt loopt — maar er wordt alleen in het antwoordvenster naar
+     een antwoord geluisterd. Hij blijft tussendoor open omdat hem telkens
+     opnieuw openen tijd kost en op Android het geluid onderbreekt.
    - Werkt de spraakbediening niet zoals verwacht, kijk dan onder ⚙: daar
-     staat of de herkenning op het toestel zelf of via internet loopt, en
-     een logboek van de laatste 25 gebeurtenissen (mic aan/uit, fouten,
-     wat er gehoord is en of het geteld werd).
+     staat welke manier van luisteren actief is en hoeveel opnames er
+     zijn, plus een logboek van de laatste 25 gebeurtenissen (mic aan/uit,
+     fouten, wat er gehoord is, met hoeveel procent en of het geteld werd).
 5. Staat er een nieuwe versie van de app klaar, dan vraagt hij "Nieuwe
    versie beschikbaar — nu bijwerken?". Tik je op "Nu bijwerken", dan
    installeert en herstart hij zichzelf in een paar seconden. Zie
@@ -160,11 +173,16 @@ Beperkingen
   duizenden fragmenten.
 - De repo is publiek: broncode en bestandenlijst zijn zichtbaar voor
   iedereen op GitHub.
-- Spraakbediening ("ja"/"nee") is het enige onderdeel dat meestal wél
-  internet nodig heeft: de meeste browsers sturen het geluid naar de
+- Spraakbediening werkt pas goed nadat je je stem geoefend hebt, en die
+  opnames gelden voor één stem op één toestel. Zolang dat niet gebeurd is
+  valt de app terug op de woordherkenner van de browser, en die heeft
+  meestal internet nodig: de meeste browsers sturen het geluid naar de
   server van de browserleverancier. Alleen als de browser Nederlands op
   het toestel zelf kan herkennen (Chrome 139+ met het taalpakket) werkt
-  het ook offline; de app schakelt dat automatisch in als het kan. Lukt
-  herkenning niet, dan zet de app spraakbediening uit met een melding en
-  kun je gewoon weer tikken. De quiz zelf blijft altijd volledig offline
-  werken.
+  die terugval ook offline; de app schakelt dat automatisch in als het
+  kan. Lukt de microfoon helemaal niet, dan zet de app spraakbediening uit
+  met een melding en kun je gewoon weer tikken. De quiz zelf blijft altijd
+  volledig offline werken.
+- De klankherkenner kent maar twee antwoorden. "Ik weet het niet" of
+  "geen idee" telt dus niet meer als NIET GEKEND zoals bij de
+  woordherkenner; zeg gewoon "nee".

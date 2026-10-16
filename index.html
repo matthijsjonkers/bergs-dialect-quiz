@@ -125,7 +125,7 @@
   }
   #trainHeard {
     font-size: .8rem; color: #aaa; text-align: center; margin-top: .4rem;
-    min-height: 2.4rem; line-height: 1.4;
+    min-height: 2.4rem; line-height: 1.4; white-space: pre-line;
   }
   #trainLearned {
     font-size: .75rem; color: #999; margin-top: 1rem; white-space: pre-line;
@@ -191,16 +191,17 @@
 <div id="trainModal" class="modal hidden">
   <div class="modal-content">
     <h2>Stem oefenen</h2>
-    <p id="trainIntro">De spraakherkenner zelf is niet bij te stellen, maar de app
-       kan wel onthouden wát hij van jouw “ja” en “nee” maakt. Zeg het woord een
-       paar keer na het piepje; alles wat de herkenner er dan van maakt telt
-       voortaan als dat antwoord. Doe dit bij voorkeur in de auto, met motor en
-       ventilatie aan — dan leert hij precies de omstandigheden waarin je
-       antwoordt.</p>
+    <p id="trainIntro">De app luistert niet naar wélk woord je zegt, maar naar hoe
+       het klinkt. Zeg “nee” en “ja” allebei vijf keer na het piepje; de app
+       bewaart dan de klank van jouw stem en herkent daarna in de quiz welke van
+       de twee je zegt. Doe dit in de auto, met motor en ventilatie aan — dan
+       leert hij precies de omstandigheden waarin je straks antwoordt. Met de
+       luistertest controleer je meteen of hij je goed verstaat.</p>
     <div id="trainPrompt"></div>
     <div id="trainHeard"></div>
     <button id="trainNeeBtn">“Nee” oefenen (5 keer)</button>
     <button id="trainJaBtn">“Ja” oefenen (5 keer)</button>
+    <button id="trainTestBtn">Luistertest</button>
     <button id="trainStopBtn" hidden>Stoppen</button>
     <div id="trainLearned"></div>
     <button id="trainResetBtn">Geoefende uitspraken wissen</button>
@@ -273,7 +274,9 @@
       lastRoundCounts: state.lastRoundCounts,
       // Zelf aangeleerde uitspraken van "ja"/"nee"; zie de spraaksectie.
       // Wordt pas verderop gevuld, maar saveState() draait nooit eerder.
-      voiceLearned: learned
+      voiceLearned: learned,
+      // De opgenomen klankprofielen van jouw "ja" en "nee".
+      voiceProfiles: storedProfiles()
     }));
   }
 
@@ -309,6 +312,7 @@
   const trainNeeBtn = document.getElementById("trainNeeBtn");
   const trainJaBtn = document.getElementById("trainJaBtn");
   const trainStopBtn = document.getElementById("trainStopBtn");
+  const trainTestBtn = document.getElementById("trainTestBtn");
   const trainResetBtn = document.getElementById("trainResetBtn");
   const trainCloseBtn = document.getElementById("trainCloseBtn");
   const trainLearned = document.getElementById("trainLearned");
@@ -767,6 +771,10 @@
     if (audioSuspendTimer) clearTimeout(audioSuspendTimer);
     audioSuspendTimer = setTimeout(function () {
       audioSuspendTimer = null;
+      // De klankherkenner meet het binnenkomende geluid via dezelfde
+      // AudioContext. Slaapt die, dan staat zijn analyser stil en hoort de
+      // app niets meer — dus zolang de microfoon open staat blijft hij wakker.
+      if (micStream) return;
       if (audioCtx && audioCtx.state === "running") {
         try { audioCtx.suspend(); } catch (e) {}
       }
@@ -869,8 +877,12 @@
   // De spraakherkenner zelf is niet te trainen: de browser stuurt het geluid
   // naar een vast model en geeft alleen tekst terug. Wat wél kan is de
   // vertaalslag daarna bijhouden — wélke tekst de herkenner van jóuw "nee"
-  // maakt. Die teksten worden in de oefenstand verzameld (zie verderop) en
-  // hier geraadpleegd. Vorm: { gekend: {tekst: aantal}, niet: {tekst: aantal} }.
+  // maakt. Vorm: { gekend: {tekst: aantal}, niet: {tekst: aantal} }.
+  //
+  // Het oefenvenster vult deze lijst niet meer: dat neemt nu jouw stem zelf
+  // op voor de klankherkenner hieronder, en dat werkt een stuk beter. Wat er
+  // eerder geleerd is blijft wél gelden zolang de woordherkenner aan de beurt
+  // is — dus totdat er genoeg opnames zijn — en gaat gewoon mee in een export.
 
   // Een geleerde sleutel is altijd genormaliseerde tekst van hooguit twee
   // woorden. Langer is nooit een losse ja/nee-klank maar een halve zin, en die
@@ -920,10 +932,7 @@
     return Object.keys(learned.gekend).length + Object.keys(learned.niet).length;
   }
 
-  // skipLearned: alleen de ingebouwde lijsten raadplegen. Nodig bij het
-  // aanleren, om te zien of een klank van huis uit al het ándere antwoord
-  // betekent — dan moet hij juist níet geleerd worden.
-  function findAnswer(tokens, skipLearned) {
+  function findAnswer(tokens) {
     if (!tokens.length) return null;
     const zin = tokens.join(" ");
     // Hele zinnetjes eerst: in "weet ik niet" zit geen los "nee", maar het
@@ -931,19 +940,15 @@
     if (/(weet (ik |het )?niet|geen idee|geen flauw|nou nee)/.test(zin)) return "niet";
     // Een geleerde uitspraak kan uit twee woorden bestaan ("neeë hè"), dus
     // eerst de hele zin proberen voor we hem in losse woorden knippen.
-    if (!skipLearned) {
-      const geleerdeZin = learnedAnswer(zin);
-      if (geleerdeZin) return geleerdeZin;
-    }
+    const geleerdeZin = learnedAnswer(zin);
+    if (geleerdeZin) return geleerdeZin;
     // Verder van achter naar voren: bij "ja, eh, nee" geldt het laatste woord.
     for (let i = tokens.length - 1; i >= 0; i--) {
       const t = tokens[i];
       if (JA_WOORDEN[t] || JA_KLANK.test(t)) return "gekend";
       if (NEE_WOORDEN[t] || NEE_KLANK.test(t)) return "niet";
-      if (!skipLearned) {
-        const geleerd = learnedAnswer(t);
-        if (geleerd) return geleerd;
-      }
+      const geleerd = learnedAnswer(t);
+      if (geleerd) return geleerd;
     }
     if (tokens.length === 1 && NEE_RIJMT_OP[tokens[0]]) return "niet";
     return null;
@@ -959,6 +964,480 @@
     const pad = function (n) { return ("0" + n).slice(-2); };
     voiceLog.push(pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()) + "  " + text);
     if (voiceLog.length > VOICE_LOG_MAX) voiceLog.shift();
+  }
+
+  // ---------------------------------------------------------------------
+  // Klankherkenner: naar het gelúid luisteren in plaats van naar woorden
+  // ---------------------------------------------------------------------
+  // De woordherkenner van de browser moet van jouw geluid een bestaand
+  // Nederlands woord maken, en "nee" verliest dat gevecht steeds: één korte,
+  // zachte lettergreep zonder slotmedeklinker, die op tientallen gewone
+  // woorden rijmt ("mee", "twee", "m'n"). Elke lijst met rijmwoorden is
+  // dweilen: je vist achteraf naar wat hij er déze keer van maakte.
+  //
+  // Dat hele woord hoeven we helemaal niet te weten. In het antwoordvenster
+  // bestaan er maar twee antwoorden, en twee klanken uit elkaar houden is een
+  // veel kleiner probleem dan ze benoemen. Daarom luistert de app hier zelf
+  // mee via de Web Audio API: één open microfoonstream, zelf bepalen waar een
+  // uitspraak begint en eindigt, van die uitspraak een klankprofiel maken
+  // (hoeveel geluid er in welke frequentieband zit) en dat vergelijken met de
+  // opnames uit "Stem oefenen". De dichtstbijzijnde wint; staat die niet
+  // duidelijk dichterbij dan het andere antwoord, dan gebeurt er niets.
+  //
+  // Dat dit kan zit in de klanken zelf: de aa van "ja" heeft zijn tweede
+  // formant rond 1100 Hz, de ee van "nee" rond 2200 Hz, en "nee" begint met
+  // een neusklank. Dat verschil blijft ook met motorgeronk eroverheen staan.
+  // Winst bovendien: het werkt volledig offline, zonder de start/stop-piepjes
+  // en "microfoon komt niet vrij"-lussen van de woordherkenner, en het
+  // reageert zodra jij uitgesproken bent in plaats van na de herkenner.
+  const supportsMic = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+
+  // Ruisonderdrukking, echo-annulering en automatische volumeregeling staan
+  // bewust uit. Ze verbouwen het geluid — en juist de vorm van dat geluid is
+  // hier het antwoord. Zonder die bewerking klinkt een opname tijdens het
+  // oefenen hetzelfde als tijdens de quiz, en dat is precies wat de
+  // vergelijking nodig heeft. Hard of zacht praten maakt niet uit: het
+  // profiel wordt op sterkte genormaliseerd.
+  const MIC_CONSTRAINTS = {
+    echoCancellation: false, noiseSuppression: false, autoGainControl: false
+  };
+
+  const PROFILE_VERSION = 1;    // verandert de vorm van een profiel, dan ook dit
+  const BAND_COUNT = 16;        // frequentiebanden per stukje uitspraak
+  const BAND_LOW_HZ = 150;      // daaronder zit vooral motorgeronk
+  const BAND_HIGH_HZ = 5500;    // daarboven zit nauwelijks nog klinkerinformatie
+  // Een uitspraak wordt in tweeën geknipt en per helft apart beschreven. Zo
+  // telt ook het verloop mee: "nee" begint met een neusklank en gaat over in
+  // de ee, "ja" begint met de j en gaat naar de aa. Alleen het gemiddelde van
+  // de hele uitspraak zou dat verschil juist wegmiddelen.
+  const PROFILE_SEGMENTS = 2;
+  const PROFILE_LENGTH = BAND_COUNT * PROFILE_SEGMENTS;
+  const MIN_PROFILES = 3;       // zoveel opnames per antwoord voor hij aan gaat
+  const MAX_PROFILES = 12;      // daarboven valt de oudste af
+  const FRAME_MS = 25;          // hoe vaak we naar het geluid kijken
+  const MIN_UTTERANCE_MS = 120; // korter is een tik of een klik, geen woord
+  const MAX_UTTERANCE_MS = 1600;
+  const END_SILENCE_MS = 220;   // zo lang stil = uitgesproken
+  // Na het piepje even niets aannemen: de microfoon hoort dat piepje zelf ook,
+  // en dat mag geen antwoord worden. Ruim na het piepje (0,2 s) maar kort
+  // genoeg om een snel "nee" nog heel te laten — op een telefoon duurt het
+  // nog even voor zo'n tikje daadwerkelijk uit de speaker komt.
+  const DEAF_MS = 400;
+  // Hoe streng de vergelijking is. Afstand = 1 - gelijkenis; de winnaar moet
+  // zowel op zichzelf dichtbij staan als duidelijk dichterbij dan de ander.
+  // Liever niets dan een gok: een verkeerd geteld antwoord corrigeer je niet.
+  const MAX_DIST = 0.35;
+  const DIST_RATIO = 0.75;
+
+  let profiles = loadProfiles(stored.voiceProfiles);
+
+  function emptyProfiles() { return { gekend: [], niet: [] }; }
+
+  function normalizeProfile(item) {
+    if (!Array.isArray(item) || item.length !== PROFILE_LENGTH) return null;
+    const p = new Array(PROFILE_LENGTH);
+    let som = 0;
+    for (let i = 0; i < PROFILE_LENGTH; i++) {
+      const n = Number(item[i]);
+      if (!isFinite(n) || n < 0) return null;
+      p[i] = n;
+      som += n * n;
+    }
+    return som > 0 ? p : null;
+  }
+
+  function loadProfiles(raw) {
+    const out = emptyProfiles();
+    if (!raw || typeof raw !== "object") return out;
+    // Een profiel uit een oudere versie beschrijft andere frequentiebanden en
+    // zou tot willekeurige antwoorden leiden. Dan liever opnieuw laten
+    // oefenen dan stilletjes verkeerd raden.
+    if (raw.v !== PROFILE_VERSION || raw.bands !== BAND_COUNT) return out;
+    ["gekend", "niet"].forEach(function (label) {
+      const lijst = Array.isArray(raw[label]) ? raw[label] : [];
+      lijst.forEach(function (item) {
+        const p = normalizeProfile(item);
+        if (p && out[label].length < MAX_PROFILES) out[label].push(p);
+      });
+    });
+    return out;
+  }
+
+  function storedProfiles() {
+    return {
+      v: PROFILE_VERSION, bands: BAND_COUNT,
+      gekend: profiles.gekend, niet: profiles.niet
+    };
+  }
+
+  function profilesReady() {
+    return supportsMic &&
+      profiles.gekend.length >= MIN_PROFILES &&
+      profiles.niet.length >= MIN_PROFILES;
+  }
+
+  // Welke manier van luisteren is er op dit moment: de klankherkenner (jouw
+  // eigen stem), de woordherkenner van de browser, of niets. De klankherkenner
+  // gaat voor zodra hij genoeg opnames heeft; tot die tijd blijft het gedrag
+  // zoals het was. Wie terug wil naar de woordherkenner wist zijn opnames.
+  // Allebei tegelijk kan niet: twee luisteraars op één microfoon vechten op
+  // Android om de audiofocus, en dat was precies de oude ellende.
+  function voiceMode() {
+    if (profilesReady()) return "klank";
+    if (SpeechRecognitionCtor) return "woord";
+    return "geen";
+  }
+
+  // ---- Van geluid naar klankprofiel ------------------------------------
+  // Welke fft-vakjes horen bij welke band. Logaritmisch verdeeld, want zo
+  // hoort een oor ook: het verschil tussen 300 en 600 Hz is even betekenisvol
+  // als dat tussen 2000 en 4000 Hz.
+  function bandEdges(sampleRate, binCount) {
+    const binHz = sampleRate / (binCount * 2);
+    const hoog = Math.min(BAND_HIGH_HZ, sampleRate / 2 - binHz);
+    const edges = [];
+    for (let i = 0; i <= BAND_COUNT; i++) {
+      const hz = BAND_LOW_HZ * Math.pow(hoog / BAND_LOW_HZ, i / BAND_COUNT);
+      let bin = Math.round(hz / binHz);
+      if (i && bin <= edges[i - 1]) bin = edges[i - 1] + 1; // elke band minstens één vakje
+      edges.push(Math.min(binCount, Math.max(1, bin)));
+    }
+    return edges;
+  }
+
+  // Eén momentopname: hoeveel van het geluid zit er in elke band? Niet de
+  // sterkte zelf maar het aandeel, en daarvan de wortel. Daardoor heeft de
+  // vector altijd lengte 1 en meet een puntproduct van twee vectoren
+  // rechtstreeks hoe sterk twee klanken op elkaar lijken — of je nu hard of
+  // zacht praat.
+  function frameVector(freqDb, edges) {
+    const v = new Array(BAND_COUNT);
+    let som = 0;
+    for (let b = 0; b < BAND_COUNT; b++) {
+      let e = 0;
+      for (let i = edges[b]; i < edges[b + 1]; i++) {
+        e += Math.pow(10, freqDb[i] / 10); // decibel terug naar vermogen
+      }
+      v[b] = e;
+      som += e;
+    }
+    if (!(som > 0)) return null;
+    for (let b = 0; b < BAND_COUNT; b++) v[b] = Math.sqrt(v[b] / som);
+    return v;
+  }
+
+  // De momentopnames van één uitspraak samenvatten tot één profiel: per helft
+  // het gemiddelde, elke helft weer op lengte 1 gebracht zodat een lange en
+  // een korte helft even zwaar wegen.
+  function buildProfile(frames) {
+    if (frames.length < 2) return null;
+    const uit = new Array(PROFILE_LENGTH).fill(0);
+    const schaal = 1 / Math.sqrt(PROFILE_SEGMENTS);
+    for (let s = 0; s < PROFILE_SEGMENTS; s++) {
+      const van = Math.floor(frames.length * s / PROFILE_SEGMENTS);
+      const tot = Math.floor(frames.length * (s + 1) / PROFILE_SEGMENTS);
+      if (tot <= van) return null;
+      const deel = new Array(BAND_COUNT).fill(0);
+      for (let f = van; f < tot; f++) {
+        for (let b = 0; b < BAND_COUNT; b++) deel[b] += frames[f][b];
+      }
+      let som = 0;
+      for (let b = 0; b < BAND_COUNT; b++) som += deel[b] * deel[b];
+      const lengte = Math.sqrt(som);
+      if (!(lengte > 0)) return null;
+      for (let b = 0; b < BAND_COUNT; b++) {
+        // Afronden houdt de opslag klein; op de vergelijking scheelt het niets.
+        uit[s * BAND_COUNT + b] = Math.round(deel[b] / lengte * schaal * 1000) / 1000;
+      }
+    }
+    return uit;
+  }
+
+  function similarity(a, b) {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < PROFILE_LENGTH; i++) {
+      dot += a[i] * b[i];
+      na += a[i] * a[i];
+      nb += b[i] * b[i];
+    }
+    if (!(na > 0) || !(nb > 0)) return 0;
+    return dot / Math.sqrt(na * nb);
+  }
+
+  // -1 betekent: er is niets om mee te vergelijken.
+  function bestSimilarity(p, lijst) {
+    let best = -1;
+    for (let i = 0; i < lijst.length; i++) {
+      const s = similarity(p, lijst[i]);
+      if (s > best) best = s;
+    }
+    return best;
+  }
+
+  function classifyProfile(p) {
+    const simJa = bestSimilarity(p, profiles.gekend);
+    const simNee = bestSimilarity(p, profiles.niet);
+    const dJa = 1 - simJa, dNee = 1 - simNee;
+    const winnaar = dJa <= dNee ? "gekend" : "niet";
+    const dichtbij = Math.min(dJa, dNee);
+    const ander = Math.max(dJa, dNee);
+    // Twee eisen: de winnaar moet op zichzelf genoeg lijken (anders is het
+    // gekuch, een voorbijrijdende auto of een half woord), én hij moet
+    // duidelijk dichterbij staan dan het andere antwoord (anders is het een
+    // munt opgooien tussen ja en nee).
+    const zeker = dichtbij <= MAX_DIST && dichtbij <= DIST_RATIO * ander;
+    return { answer: zeker ? winnaar : null, simJa: simJa, simNee: simNee };
+  }
+
+  function pct(sim) {
+    return sim < 0 ? "—" : Math.round(sim * 100) + "%";
+  }
+
+  // ---- De microfoon en het volgen van een uitspraak --------------------
+  let micStream = null, micSource = null, micAnalyser = null, micTimer = null;
+  let micFreq = null, micTime = null, micEdges = null;
+  let micStarting = false;
+  let micToken = 0;             // maakt het antwoord van een oude start ongeldig
+  let micPurpose = null;        // "quiz" | "oefenen" | "test", of null
+  let micHandlers = null;
+  let micAnalysing = false;     // mag binnenkomend geluid nú een antwoord zijn?
+  let micManualListen = false;  // bij oefenen/testen: luisteren wij nu?
+  let micDeafUntil = 0;
+  // Schatting van het omgevingsgeluid (motor, ventilatie, banden). De drempel
+  // waarboven iets "spraak" heet beweegt daarin mee: in een stille auto hoort
+  // hij een zacht "nee", op de snelweg wordt hij vanzelf minder kriebelig.
+  let micNoiseFloor = 0.01;
+  let utterFrames = null;       // null = er is nu geen uitspraak bezig
+  let utterSilence = 0;
+  let utterStart = 0;
+
+  function resetUtterance() {
+    utterFrames = null;
+    utterSilence = 0;
+    utterStart = 0;
+  }
+
+  function micListening() {
+    return !!micStream && micAnalysing;
+  }
+
+  function openMic(purpose, handlers) {
+    if (micPurpose === purpose && (micStream || micStarting)) {
+      micHandlers = handlers;
+      return;
+    }
+    if (micPurpose && micPurpose !== purpose) closeMic();
+    micPurpose = purpose;
+    micHandlers = handlers;
+    if (micStream || micStarting) return;
+    if (!supportsMic) {
+      micPurpose = null;
+      micHandlers = null;
+      return;
+    }
+    const token = ++micToken;
+    micStarting = true;
+    navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS }).then(function (stream) {
+      micStarting = false;
+      if (token !== micToken || !micPurpose) {
+        stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+        return;
+      }
+      micStream = stream;
+      const ctx = getAudioCtx();
+      micSource = ctx.createMediaStreamSource(stream);
+      micAnalyser = ctx.createAnalyser();
+      micAnalyser.fftSize = 1024;
+      // Weinig naglans: we willen de klank van dit moment zien, niet een
+      // uitgesmeerd gemiddelde van het laatste halve woord.
+      micAnalyser.smoothingTimeConstant = 0.2;
+      micSource.connect(micAnalyser); // bewust niet naar de speakers: dat zou rondzingen
+      micFreq = new Float32Array(micAnalyser.frequencyBinCount);
+      micTime = new Float32Array(micAnalyser.fftSize);
+      micEdges = bandEdges(ctx.sampleRate, micAnalyser.frequencyBinCount);
+      // Laag beginnen en vanzelf omhoog laten lopen: anders staat de drempel
+      // bij het eerste woord te hoog en valt juist een zacht "nee" buiten de boot.
+      micNoiseFloor = 0.004;
+      micAnalysing = false;
+      resetUtterance();
+      micTimer = setInterval(micTick, FRAME_MS);
+      logVoice("mic aan (klankherkenner, " + micPurpose + ")");
+      updateVoiceStatusText();
+    }).catch(function (err) {
+      micStarting = false;
+      if (token !== micToken) return;
+      const doel = micPurpose;
+      micPurpose = null;
+      micHandlers = null;
+      handleMicError(err, doel);
+    });
+  }
+
+  // Zonder purpose sluit hij hoe dan ook; mét purpose alleen als de microfoon
+  // ook echt voor dat doel openstaat — zo haalt de quiz hem niet weg bij het
+  // oefenvenster.
+  function closeMic(purpose) {
+    if (purpose && micPurpose !== purpose) return;
+    micToken += 1;
+    micPurpose = null;
+    micHandlers = null;
+    micStarting = false;
+    micAnalysing = false;
+    micManualListen = false;
+    resetUtterance();
+    if (micTimer) { clearInterval(micTimer); micTimer = null; }
+    if (micSource) {
+      try { micSource.disconnect(); } catch (e) {}
+      micSource = null;
+    }
+    micAnalyser = null;
+    if (micStream) {
+      micStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+      micStream = null;
+      logVoice("mic uit (klankherkenner)");
+      suspendAudioCtxSoon();
+    }
+  }
+
+  function handleMicError(err, purpose) {
+    const naam = (err && err.name) || "onbekend";
+    logVoice("mic mislukt: " + naam);
+    let melding;
+    if (naam === "NotAllowedError" || naam === "SecurityError") {
+      melding = "Geen toegang tot de microfoon — geef de app toestemming in de browserinstellingen.";
+    } else if (naam === "NotFoundError" || naam === "NotReadableError" || naam === "OverconstrainedError") {
+      melding = "Geen microfoon beschikbaar — gebruikt een andere app hem misschien?";
+    } else {
+      melding = "De microfoon kon niet gestart worden (" + naam + ").";
+    }
+    if (purpose === "quiz") {
+      setVoiceEnabled(false);
+      setVoiceHint("🎤 " + melding);
+    } else {
+      stopTraining(melding);
+    }
+  }
+
+  // Mag er op dit moment naar een antwoord geluisterd worden? Tijdens het
+  // fragment niet: in de auto komt dat uit de speakers en zou de "ja" of "nee"
+  // in de uitgesproken betekenis als jouw antwoord tellen. De stream blijft
+  // dan wel gewoon open — die steeds opnieuw opbouwen kost tijd, en het was
+  // juist het eindeloze start/stoppen dat de oude herkenner zo hinderde.
+  function analysisWanted() {
+    if (micPurpose === "quiz") return voiceGateOpen();
+    return micManualListen;
+  }
+
+  function micTick() {
+    if (!micAnalyser) return;
+    const nu = Date.now();
+
+    const wil = analysisWanted();
+    if (wil !== micAnalysing) {
+      micAnalysing = wil;
+      resetUtterance();
+      if (wil) {
+        // Het piepje en de meting beginnen op hetzelfde moment; de deaf-tijd
+        // erna zorgt dat de microfoon zijn eigen piepje niet als antwoord
+        // opvat. Daarom hoort de aanroeper hier pas dat we luisteren.
+        micDeafUntil = nu + DEAF_MS;
+        if (micHandlers && micHandlers.listening) {
+          try { micHandlers.listening(); } catch (e) {}
+        }
+        // Alleen bij het begin van het luisteren bijwerken. Bij het einde
+        // niet: dat valt samen met een net geteld antwoord, en dan zou
+        // "Gehoord: ja" meteen weer van het scherm geveegd worden. Wat er
+        // daarna moet staan bepaalt de quiz zelf bij het volgende woord.
+        updateVoiceStatusText();
+      }
+    }
+    if (!micAnalysing || nu < micDeafUntil) return;
+
+    micAnalyser.getFloatTimeDomainData(micTime);
+    let som = 0;
+    for (let i = 0; i < micTime.length; i++) som += micTime[i] * micTime[i];
+    const rms = Math.sqrt(som / micTime.length);
+
+    const start = Math.max(micNoiseFloor * 4, 0.012);
+    const stop = Math.max(micNoiseFloor * 2, 0.006);
+
+    if (!utterFrames) {
+      if (rms < start) {
+        // Alleen meebewegen met echte achtergrondruis, niet met het woord dat
+        // net gezegd wordt: daarom een plafond op wat als ruis telt. Omhoog
+        // gaat het sneller dan omlaag — stap je de snelweg op, dan moet de
+        // drempel meteen mee, anders hoort hij alleen nog maar wegdek.
+        const stap = rms > micNoiseFloor ? 0.15 : 0.05;
+        micNoiseFloor = micNoiseFloor * (1 - stap) + Math.min(rms, micNoiseFloor * 4) * stap;
+        if (micNoiseFloor < 0.0008) micNoiseFloor = 0.0008;
+        return;
+      }
+      utterFrames = [];
+      utterSilence = 0;
+      utterStart = nu;
+    }
+
+    micAnalyser.getFloatFrequencyData(micFreq);
+    const v = frameVector(micFreq, micEdges);
+    if (v && rms >= stop) {
+      utterFrames.push(v);
+      utterSilence = 0;
+    } else {
+      utterSilence += FRAME_MS;
+    }
+    if (utterSilence >= END_SILENCE_MS) finishUtterance(false);
+    else if (nu - utterStart >= MAX_UTTERANCE_MS) finishUtterance(true);
+  }
+
+  function finishUtterance(afgekapt) {
+    const frames = utterFrames || [];
+    const duur = frames.length * FRAME_MS;
+    resetUtterance();
+    micDeafUntil = Date.now() + 150; // naklinken van het woord niet als tweede uitspraak tellen
+    if (duur < MIN_UTTERANCE_MS) {
+      logVoice("klank: te kort geluid genegeerd (" + duur + " ms)");
+      return;
+    }
+    // Nog steeds aan het praten na anderhalve seconde: dan is dit een gesprek
+    // in de auto en geen antwoord. "Ja" en "nee" zijn kort en daarna is het
+    // even stil; dat is precies het verschil. Zo'n stuk niet eens wegen —
+    // een halve zin lijkt toevallig nog weleens op een van de twee.
+    if (afgekapt) {
+      logVoice("klank: doorlopend gepraat genegeerd");
+      return;
+    }
+    const profiel = buildProfile(frames);
+    if (!profiel) return;
+    if (micHandlers && micHandlers.utterance) micHandlers.utterance(profiel, duur);
+  }
+
+  const quizMicHandlers = {
+    listening: playListenCue,
+    utterance: function (profiel, duur) {
+      const uitslag = classifyProfile(profiel);
+      const cijfers = "ja " + pct(uitslag.simJa) + " / nee " + pct(uitslag.simNee) +
+        ", " + duur + " ms";
+      if (!uitslag.answer) {
+        logVoice("klank: niet zeker genoeg (" + cijfers + ")");
+        setVoiceHint("🎤 Niet verstaan — zeg “ja” of “nee”");
+        return;
+      }
+      const woord = uitslag.answer === "gekend" ? "ja" : "nee";
+      if (handleVoiceAnswer(uitslag.answer)) {
+        logVoice("klank: “" + woord + "” geteld (" + cijfers + ")");
+      } else {
+        logVoice("klank: “" + woord + "” buiten het antwoordvenster (" + cijfers + ")");
+      }
+    }
+  };
+
+  // De microfoonstream mag openstaan zolang de quiz loopt — ook tijdens het
+  // fragment, want analysisWanted() bepaalt apart of er geluisterd wordt.
+  function micWindowOpen() {
+    return voiceActive &&
+      !trainingActive && // het oefenvenster gebruikt de microfoon zelf
+      document.visibilityState === "visible" &&
+      state.running;
   }
 
   let recognition = null;        // lopende herkenner, of null
@@ -1187,7 +1666,7 @@
       if (!recognitionClosing) return;
       logVoice("afsluiten duurde te lang — toch weer vrijgegeven");
       recognitionClosing = false;
-      syncRecognition();
+      syncVoiceInput();
       updateVoiceStatusText();
     }, 2000);
     try {
@@ -1224,10 +1703,17 @@
       voiceGateOpen();
   }
 
-  // Zet de herkenner aan of uit zodat hij klopt met voiceWindowOpen().
-  // Bewust zonder het bijschrift aan te raken: de aanroepers bepalen zelf
-  // wat er moet staan (bijvoorbeeld "Gehoord: ja" na een antwoord).
-  function syncRecognition() {
+  // Zet de luisteraar aan of uit zodat hij klopt met het moment. Bewust
+  // zonder het bijschrift aan te raken: de aanroepers bepalen zelf wat er
+  // moet staan (bijvoorbeeld "Gehoord: ja" na een antwoord).
+  function syncVoiceInput() {
+    if (voiceMode() === "klank") {
+      stopRecognition(); // één luisteraar tegelijk, anders vechten ze om de microfoon
+      if (micWindowOpen()) openMic("quiz", quizMicHandlers);
+      else closeMic("quiz");
+      return;
+    }
+    closeMic("quiz");
     if (voiceWindowOpen()) startRecognition();
     else stopRecognition();
   }
@@ -1241,9 +1727,20 @@
 
   function updateVoiceStatusText() {
     if (!voiceActive) { setVoiceHint(""); return; }
+    const modus = voiceMode();
+    if (modus === "geen") {
+      setVoiceHint("🎤 Oefen eerst je stem onder ⚙ — anders kan de app niet meeluisteren");
+      return;
+    }
     if (!state.running) { setVoiceHint("🎤 Spraakbediening aan"); return; }
     if (!voiceGateOpen()) {
       setVoiceHint("🎤 Zeg “ja” of “nee” zodra het fragment klaar is");
+      return;
+    }
+    if (modus === "klank") {
+      // Het piepje valt samen met het moment dat er echt gemeten wordt; tot
+      // die tijd niet alvast "Luistert" beloven.
+      setVoiceHint(micListening() ? "🎤 Luistert — zeg “ja” of “nee”" : "🎤 Microfoon start…");
       return;
     }
     if (voiceStartFailures > MAX_START_FAILURES) {
@@ -1274,209 +1771,204 @@
   // ---------------------------------------------------------------------
   // Oefenstand: de app jouw "ja" en "nee" leren
   // ---------------------------------------------------------------------
-  // Het model in de browser is niet te trainen, dus leren we de laag erboven:
-  // de app vraagt je het woord een paar keer te zeggen en bewaart élke tekst
-  // die de herkenner er dan van maakt ("mee", "nihil", "m'n"). Die teksten
-  // tellen daarna in het antwoordvenster als dat antwoord. Dat werkt juist
-  // hier zo goed omdat er maar twee antwoorden bestaan: een verkeerd
-  // verstaan woord is in dat venster vrijwel altijd nog steeds jouw "nee".
+  // Hier wordt de klankherkenner gevuld. Je zegt het woord een paar keer na
+  // het piepje en van elke opname wordt het klankprofiel bewaard. Zodra er
+  // van allebei de antwoorden genoeg opnames liggen, luistert de quiz naar
+  // het geluid zelf in plaats van naar de woordherkenner van de browser.
+  //
+  // Oefen in de auto, met motor en ventilatie aan: de app vergelijkt straks
+  // met precies deze opnames, dus hoe meer ze lijken op het moment waarop je
+  // antwoordt, hoe scherper de herkenning.
   const TRAIN_ROUNDS = 5;
-  const TRAIN_MAX_ALTERNATIVES = 4; // meer gokken is meer ruis dan winst
-  const TRAIN_LISTEN_MS = 7000;     // zo lang wachten op een antwoord per ronde
+  const TRAIN_LISTEN_MS = 7000;  // zo lang wachten op een uitspraak per ronde
 
   let trainTarget = null;      // "gekend" | "niet"
   let trainRemaining = 0;
-  let trainRec = null;
-  let trainTimer = null;       // luistertimeout óf de pauze tussen twee rondes
+  let trainTesting = false;    // luistertest in plaats van opnemen
+  let trainTimer = null;       // luistertimeout of de pauze tussen twee rondes
 
   function trainWord(label) {
     return label === "gekend" ? "ja" : "nee";
   }
 
-  function renderLearned() {
+  function renderVoiceLearning() {
     const regels = [];
+    regels.push("Opnames: “nee” " + profiles.niet.length + ", “ja” " +
+      profiles.gekend.length + " (" + MIN_PROFILES + " per antwoord nodig)");
+    if (profilesReady()) {
+      regels.push("De klankherkenner staat aan: de app luistert naar jouw stem, ook zonder internet.");
+    } else if (SpeechRecognitionCtor) {
+      regels.push("Nog niet genoeg opnames — zolang luistert de app naar woorden via de browser.");
+    } else {
+      regels.push("Nog niet genoeg opnames — tot die tijd kan spraakbediening op dit toestel niets horen.");
+    }
+    // De woordherkenner kende ook zelf aangeleerde teksten. Die blijven staan
+    // en blijven gelden zolang hij nog aan de beurt is.
+    const teksten = [];
     ["niet", "gekend"].forEach(function (label) {
-      const teksten = Object.keys(learned[label]).sort(function (a, b) {
-        return learned[label][b] - learned[label][a] || a.localeCompare(b);
-      });
-      if (!teksten.length) return;
-      regels.push("Telt als “" + trainWord(label) + "”: " + teksten.map(function (t) {
-        return t + " (" + learned[label][t] + "×)";
-      }).join(", "));
+      const lijst = Object.keys(learned[label]);
+      if (lijst.length) teksten.push("“" + trainWord(label) + "”: " + lijst.join(", "));
     });
-    trainLearned.textContent = regels.length
-      ? regels.join("\n")
-      : "Nog niets geoefend. De ingebouwde lijst met ja/nee-klanken werkt gewoon al.";
+    if (teksten.length) {
+      regels.push("Eerder aangeleerde woorden (alleen voor de woordherkenner) — " + teksten.join(" · "));
+    }
+    trainLearned.textContent = regels.join("\n");
   }
 
-  // Wat de herkenner van één geoefende uitspraak maakte opslaan. Geeft een
-  // regel tekst terug voor op het scherm: in de auto wil je meteen zien of er
-  // iets bijgeleerd is of dat je het nog eens moet zeggen.
-  function learnFromTraining(label, teksten) {
+  // Een opname bewaren. Geeft een regel tekst terug voor op het scherm: in de
+  // auto wil je meteen weten of de ronde telde of dat je hem over moet doen.
+  function learnProfile(label, profiel, duur) {
     const ander = label === "gekend" ? "niet" : "gekend";
-    const nieuw = [], overgeslagen = [], bekend = [];
-    // De herkenner levert meerdere gokken per ronde, en die vallen na het
-    // opschonen vaak samen ("ja", "Ja", "ja."). Zonder deze filter telde één
-    // keer "ja" zeggen als vier keer geoefend.
-    const gezien = {};
-    teksten.forEach(function (tekst) {
-      const sleutel = normalizeLearn(tekst);
-      if (!sleutel || gezien[sleutel]) return;
-      gezien[sleutel] = true;
-      // Hoort de ingebouwde lijst hier juist het ándere antwoord in, of is
-      // deze klank al voor het andere antwoord geoefend, dan zou aanleren je
-      // "ja" en "nee" door elkaar laten lopen. Zulke gokken overslaan.
-      if (findAnswer(tokenize(sleutel), true) === ander || learned[ander][sleutel]) {
-        overgeslagen.push(sleutel);
-        return;
-      }
-      const alBekend = !!learned[label][sleutel] ||
-        findAnswer(tokenize(sleutel), true) === label;
-      learned[label][sleutel] = (learned[label][sleutel] || 0) + 1;
-      (alBekend ? bekend : nieuw).push(sleutel);
-    });
-    saveState();
-    renderLearned();
-    logVoice("geoefend (" + trainWord(label) + "): " + teksten.join(" / "));
-
-    const delen = [];
-    if (nieuw.length) delen.push("bijgeleerd: " + nieuw.join(", "));
-    if (bekend.length) delen.push("al bekend: " + bekend.join(", "));
-    if (overgeslagen.length) {
-      delen.push("overgeslagen (klinkt als “" + trainWord(ander) + "”): " + overgeslagen.join(", "));
+    const eigen = bestSimilarity(profiel, profiles[label]);
+    const vreemd = bestSimilarity(profiel, profiles[ander]);
+    // Lijkt deze opname meer op het andere antwoord, dan gaan "ja" en "nee"
+    // door elkaar lopen zodra we hem bewaren, en telt de quiz straks maar wat.
+    // Zo'n ronde overslaan en opnieuw vragen. Alleen oordelen als er van
+    // allebei al iets ligt om mee te vergelijken.
+    if (profiles[label].length && profiles[ander].length &&
+        classifyProfile(profiel).answer === ander) {
+      logVoice("oefenen (" + trainWord(label) + "): overgeslagen, klonk als “" + trainWord(ander) + "”");
+      return {
+        opgeslagen: false,
+        melding: "Overgeslagen: dit klonk meer als “" + trainWord(ander) + "” (eigen " +
+          pct(eigen) + ", ander " + pct(vreemd) + "). Zeg het nog eens."
+      };
     }
-    if (!delen.length) return "Gehoord: “" + teksten[0] + "” — te lang om als los antwoord te leren.";
-    return "Gehoord: “" + teksten[0] + "” → " + delen.join(" · ");
+    profiles[label].push(profiel);
+    // Alleen de laatste opnames bewaren: jouw stem van vandaag, in de auto van
+    // vandaag, zegt meer dan een opname van maanden terug.
+    while (profiles[label].length > MAX_PROFILES) profiles[label].shift();
+    saveState();
+    renderVoiceLearning();
+    logVoice("oefenen (" + trainWord(label) + "): opname bewaard, nu " +
+      profiles[label].length + " (" + duur + " ms)");
+    return {
+      opgeslagen: true,
+      melding: "Opgenomen (" + duur + " ms)" +
+        (eigen >= 0 ? " · lijkt " + pct(eigen) + " op je vorige “" + trainWord(label) + "”" : "")
+    };
   }
 
-  function trainListen() {
-    const rec = new SpeechRecognitionCtor();
-    rec.lang = "nl-NL";
-    rec.continuous = false;     // één uitspraak per ronde is precies wat we willen
-    rec.interimResults = false; // hier telt de definitieve tekst, niet de snelste
-    rec.maxAlternatives = 6;    // juist de alternatieven zijn hier de opbrengst
-    if (localVoiceReady) {
-      try { rec.processLocally = true; } catch (e) {}
-    }
-
-    let afgehandeld = false;
-    const rondeKlaar = function (melding) {
-      if (afgehandeld) return;
-      afgehandeld = true;
-      if (trainTimer) { clearTimeout(trainTimer); trainTimer = null; }
-      if (melding) trainHeard.textContent = melding;
-      try { rec.abort(); } catch (e) { /* onend regelt de volgende ronde */ }
-      // Vangnet: normaal brengt onend ons naar de volgende ronde, maar blijft
-      // die onverhoopt uit, dan zou het oefenen hier stilvallen.
-      setTimeout(function () {
-        if (!trainingActive || trainRec !== rec) return;
-        trainRec = null;
-        trainRemaining -= 1;
-        if (trainTimer) clearTimeout(trainTimer);
-        trainTimer = setTimeout(trainNextRound, 100);
-      }, 2500);
-    };
-
-    rec.onstart = function () {
-      // Het piepje pas hier, net als in de quiz: dit is het eerlijke moment
-      // waarop de microfoon echt openstaat. Zo oefen je bovendien met precies
-      // dezelfde timing als tijdens een echte beurt.
+  const trainMicHandlers = {
+    listening: function () {
+      // Hetzelfde piepje als in de quiz, op hetzelfde moment in de rit: pas
+      // als er echt gemeten wordt. Zo oefen je met precies de timing waarmee
+      // je straks antwoordt.
       try { playTone("listen"); } catch (e) {}
       trainHeard.textContent = "Luistert…";
+      if (trainTimer) clearTimeout(trainTimer);
       trainTimer = setTimeout(function () {
         trainTimer = null;
-        rondeKlaar("Niets gehoord — zeg het iets luider, vlak na het piepje.");
+        micManualListen = false;
+        trainHeard.textContent = "Niets gehoord — zeg het iets luider, vlak na het piepje.";
+        trainTimer = setTimeout(trainNextRound, 1200);
       }, TRAIN_LISTEN_MS);
-    };
-
-    rec.onresult = function (event) {
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        if (!res.isFinal) continue;
-        const teksten = [];
-        for (let a = 0; a < res.length && teksten.length < TRAIN_MAX_ALTERNATIVES; a++) {
-          const tekst = String((res[a] && res[a].transcript) || "").trim();
-          if (tekst) teksten.push(tekst);
-        }
-        if (!teksten.length) continue;
-        rondeKlaar(learnFromTraining(trainTarget, teksten));
-        return;
-      }
-    };
-
-    rec.onerror = function (event) {
-      const err = event && event.error;
-      logVoice("oefenen, fout: " + (err || "onbekend"));
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        stopTraining("Geen toegang tot de microfoon — geef de app toestemming in de browserinstellingen.");
-      } else if (err === "audio-capture") {
-        stopTraining("Geen microfoon beschikbaar — gebruikt een andere app hem misschien?");
-      } else if (err === "network") {
-        stopTraining("Oefenen lukt hier niet zonder internet: de browser moet het geluid opsturen.");
-      } else if (err === "no-speech") {
-        rondeKlaar("Niets gehoord — zeg het iets luider, vlak na het piepje.");
-      } else {
-        rondeKlaar("Er ging iets mis (" + (err || "onbekend") + ") — nog een keer.");
-      }
-    };
-
-    rec.onend = function () {
+    },
+    utterance: function (profiel, duur) {
+      if (!trainingActive || trainTesting) return;
       if (trainTimer) { clearTimeout(trainTimer); trainTimer = null; }
-      trainRec = null;
-      if (!trainingActive) return;
-      trainRemaining -= 1;
-      // Even wachten: je moet kunnen lezen wat er gehoord is, en het toestel
-      // moet de herkenner eerst echt loslaten voor de volgende ronde.
-      trainTimer = setTimeout(trainNextRound, 1200);
-    };
-
-    try {
-      rec.start();
-      trainRec = rec;
-      trainPrompt.textContent = "Zeg “" + trainWord(trainTarget) + "” na het piepje (" +
-        (TRAIN_ROUNDS - trainRemaining + 1) + " van " + TRAIN_ROUNDS + ")";
-    } catch (e) {
-      stopTraining("De microfoon kwam niet vrij — sluit dit venster en probeer het zo nog eens.");
+      micManualListen = false; // deze ronde zit erop
+      const uitslag = learnProfile(trainTarget, profiel, duur);
+      if (uitslag.opgeslagen) trainRemaining -= 1;
+      trainHeard.textContent = uitslag.melding;
+      // Even wachten voor de volgende ronde: je moet kunnen lezen wat er
+      // gebeurd is, en het naklinken van je stem moet weg zijn.
+      trainTimer = setTimeout(trainNextRound, 1400);
     }
-  }
+  };
+
+  // De luistertest doet precies wat de quiz straks doet, maar zonder gevolgen
+  // voor je voortgang: zo hoor je in de auto of hij je goed verstaat voordat
+  // je erop gaat vertrouwen.
+  const testMicHandlers = {
+    listening: function () {
+      try { playTone("listen"); } catch (e) {}
+      trainHeard.textContent = "Luistert — zeg “ja” of “nee”.";
+    },
+    utterance: function (profiel, duur) {
+      const uitslag = classifyProfile(profiel);
+      const cijfers = "ja " + pct(uitslag.simJa) + ", nee " + pct(uitslag.simNee) +
+        " · " + duur + " ms";
+      trainHeard.textContent = (uitslag.answer
+        ? "Gehoord: “" + trainWord(uitslag.answer) + "”"
+        : "Niet zeker genoeg — dit zou de quiz niet tellen") + "\n" + cijfers;
+      logVoice("luistertest: " +
+        (uitslag.answer ? trainWord(uitslag.answer) : "geen antwoord") + " (" + cijfers + ")");
+    }
+  };
 
   function trainNextRound() {
     trainTimer = null;
-    if (!trainingActive) return;
+    if (!trainingActive || trainTesting) return;
     if (trainRemaining <= 0) {
-      stopTraining("Klaar. Je kunt dit zo vaak herhalen als je wil — elke ronde maakt de herkenning scherper.");
+      stopTraining(profilesReady()
+        ? "Klaar. Doe de luistertest om te horen of hij je goed verstaat — elke extra ronde maakt het scherper."
+        : "Klaar. Oefen nu ook het andere antwoord: pas met allebei kan de app de twee uit elkaar houden.");
       return;
     }
-    trainListen();
+    trainPrompt.textContent = "Zeg “" + trainWord(trainTarget) + "” na het piepje (" +
+      (TRAIN_ROUNDS - trainRemaining + 1) + " van " + TRAIN_ROUNDS + ")";
+    trainHeard.textContent = "Microfoon start…";
+    micManualListen = true; // de meetlus zet het piepje en de timeout in gang
+  }
+
+  function setTrainButtons(bezig) {
+    trainNeeBtn.hidden = bezig;
+    trainJaBtn.hidden = bezig;
+    trainTestBtn.hidden = bezig;
+    trainStopBtn.hidden = !bezig;
   }
 
   function startTraining(label) {
-    if (!SpeechRecognitionCtor || trainingActive) return;
+    if (!supportsMic || trainingActive) return;
     trainingActive = true;
+    trainTesting = false;
     trainTarget = label;
     trainRemaining = TRAIN_ROUNDS;
-    stopRecognition();  // de quiz-microfoon moet nu los
-    primeMicPermission();
-    trainNeeBtn.hidden = true;
-    trainJaBtn.hidden = true;
-    trainStopBtn.hidden = false;
+    stopRecognition();  // de woordherkenner moet de microfoon nu loslaten
+    closeMic("quiz");
+    setTrainButtons(true);
     trainPrompt.textContent = "Maak je klaar…";
     trainHeard.textContent = "";
-    // Niet meteen starten: de quiz-herkenner (als die net nog aanstond) heeft
-    // een moment nodig om de microfoon vrij te geven.
-    trainTimer = setTimeout(trainNextRound, 500);
+    openMic("oefenen", trainMicHandlers);
+    // Even wachten: de microfoon moet opengaan en jij moet kunnen lezen wat
+    // er gevraagd wordt voordat het eerste piepje komt.
+    trainTimer = setTimeout(trainNextRound, 900);
+  }
+
+  function startTest() {
+    if (!supportsMic || trainingActive) return;
+    if (!profilesReady()) {
+      trainHeard.textContent = "Eerst oefenen: er zijn van allebei de antwoorden minstens " +
+        MIN_PROFILES + " opnames nodig.";
+      return;
+    }
+    trainingActive = true;
+    trainTesting = true;
+    stopRecognition();
+    closeMic("quiz");
+    setTrainButtons(true);
+    // De test stopt met dezelfde knop waarmee hij begon; de stopknop van het
+    // oefenen is hier alleen maar verwarrend.
+    trainStopBtn.hidden = true;
+    trainTestBtn.hidden = false;
+    trainTestBtn.textContent = "Luistertest stoppen";
+    trainPrompt.textContent = "Luistertest";
+    trainHeard.textContent = "Microfoon start…";
+    openMic("test", testMicHandlers);
+    micManualListen = true;
   }
 
   function stopTraining(melding) {
     if (trainTimer) { clearTimeout(trainTimer); trainTimer = null; }
     trainingActive = false;
+    trainTesting = false;
     trainRemaining = 0;
-    const rec = trainRec;
-    trainRec = null;
-    if (rec) { try { rec.abort(); } catch (e) {} }
-    trainNeeBtn.hidden = false;
-    trainJaBtn.hidden = false;
-    trainStopBtn.hidden = true;
+    micManualListen = false;
+    closeMic("oefenen");
+    closeMic("test");
+    setTrainButtons(false);
+    trainTestBtn.textContent = "Luistertest";
     trainPrompt.textContent = "";
     if (melding) trainHeard.textContent = melding;
   }
@@ -1489,11 +1981,12 @@
     voiceBtn.setAttribute("aria-pressed", voiceActive ? "true" : "false");
     if (voiceActive) {
       voiceNetworkErrors = 0;
-      syncRecognition();
+      syncVoiceInput();
       updateVoiceStatusText();
       requestQuizWakeLock();
     } else {
       stopRecognition();
+      closeMic("quiz");
       releaseQuizWakeLock();
       setVoiceHint("");
     }
@@ -1519,9 +2012,9 @@
     try { lock.release(); } catch (e) {}
   }
 
-  if (SpeechRecognitionCtor) {
+  if (supportsMic || SpeechRecognitionCtor) {
     voiceBtn.hidden = false;
-    trainVoiceBtn.hidden = false;
+    trainVoiceBtn.hidden = !supportsMic;
     voiceBtn.addEventListener("click", function () {
       const on = !voiceActive;
       // Alleen bij een bewuste tik toestemming vragen — niet bij elke start
@@ -1531,27 +2024,28 @@
     });
     voiceInfo.textContent =
       "🎤 in de bedieningsbalk zet spraakbediening aan: antwoord dan met “ja” (gekend) of " +
-      "“nee” (niet gekend) in plaats van rood/groen te tikken — handig in de auto. De " +
-      "microfoon gaat pas aan ná het fragment en meteen weer uit zodra je antwoord " +
-      "geteld is: tijdens het fragment zou de microfoon het fragment zelf als antwoord " +
-      "kunnen opvatten, en zou hij op Android het geluid onderbreken. Twee korte " +
-      "piepjes geven aan dat de microfoon echt luistert — antwoord daarná, want wat je " +
-      "vóór het piepje zegt hoort hij niet. Dat piepje komt één keer per woord; blijf je " +
-      "stil, dan luistert hij gewoon door. Het scherm blijft aan zolang dit aan staat, " +
-      "en tikken blijft gewoon werken. Wordt je “nee” vaak gemist, oefen hem dan hieronder " +
-      "in — de app leert dan wat de herkenner van jóuw stem maakt.";
+      "“nee” (niet gekend) in plaats van rood/groen te tikken — handig in de auto. Er wordt " +
+      "pas naar een antwoord geluisterd ná het fragment: tijdens het fragment zou de " +
+      "microfoon de “ja” of “nee” in de uitgesproken betekenis als jouw antwoord kunnen " +
+      "opvatten. Twee korte piepjes geven aan dat er geluisterd wordt — antwoord daarná, " +
+      "want wat je vóór het piepje zegt telt niet mee. Het scherm blijft aan zolang dit " +
+      "aan staat, en tikken blijft gewoon werken. Oefen hieronder eerst je stem: daarna " +
+      "herkent de app aan de klánk of je “ja” of “nee” zegt, zonder internet en zonder " +
+      "dat er een woordherkenner aan te pas komt. Zolang je dat niet gedaan hebt, " +
+      "luistert de app met de woordherkenner van de browser mee — die verstaat vooral " +
+      "“nee” vaak verkeerd en heeft meestal internet nodig.";
     // Eerder aangezet? Dan meteen weer luisteren. De microfoontoestemming is
     // dan al gegeven, dus daar komt geen nieuwe vraag voor.
     if (state.voiceEnabled) setVoiceEnabled(true);
   } else {
-    voiceInfo.textContent = "Deze browser ondersteunt geen spraakherkenning, dus spraakbediening (“ja”/“nee”) is hier niet beschikbaar.";
+    voiceInfo.textContent = "Deze browser geeft geen toegang tot de microfoon, dus spraakbediening (“ja”/“nee”) is hier niet beschikbaar.";
   }
 
   document.addEventListener("visibilitychange", function () {
-    // syncRecognition() kijkt zelf naar de zichtbaarheid: naar de
+    // syncVoiceInput() kijkt zelf naar de zichtbaarheid: naar de
     // achtergrond betekent microfoon uit, terug betekent alleen weer aan
     // als er op dat moment ook echt op een antwoord gewacht wordt.
-    syncRecognition();
+    syncVoiceInput();
     updateVoiceStatusText();
     if (document.visibilityState === "visible") {
       requestQuizWakeLock(); // een wake lock vervalt zodra de app naar de achtergrond gaat
@@ -1606,7 +2100,7 @@
     settingsBtn.disabled = false;
     replayBtn.disabled = true;
     setZonesActive(false);
-    syncRecognition();
+    syncVoiceInput();
     updateVoiceStatusText();
     releaseQuizWakeLock();
     statusText.textContent = "Quiz gestopt. Start opnieuw wanneer je wil.";
@@ -1654,7 +2148,7 @@
     fragmentFinished = false;
     voiceStartFailures = 0; // nieuw woord: de microfoon krijgt een schone kans
     listenCueDone = false;  // en hoe dan ook één piepje als hij straks luistert
-    syncRecognition();      // microfoon uit zolang het fragment speelt
+    syncVoiceInput();      // microfoon uit zolang het fragment speelt
     resolvePlayableSrc(word.file).then(function (src) {
       const fromCache = src.indexOf("blob:") === 0;
       if (state.currentWord !== word) {
@@ -1674,7 +2168,7 @@
         // fragment zelf als antwoord opvat: luisteren mag nu wel. Zonder dit
         // zou een onspeelbaar fragment de spraakbediening laten hangen.
         fragmentFinished = true;
-        syncRecognition();
+        syncVoiceInput();
         if (name === "NotAllowedError") {
           statusText.textContent = "Tik ergens op het scherm om afspelen toe te staan.";
         } else if (!fromCache) {
@@ -1707,7 +2201,7 @@
   player.addEventListener("ended", function () {
     if (state.phase !== "answering") return;
     fragmentFinished = true;
-    syncRecognition();       // nu pas de microfoon aanzetten
+    syncVoiceInput();       // nu pas de microfoon aanzetten
     updateVoiceStatusText(); // vanaf nu neemt de spraakbediening wél antwoord aan
     statusText.textContent = voiceActive
       ? "Kende je dit woord? Zeg “ja” of “nee” na het piepje, of tik rood/groen."
@@ -1719,14 +2213,14 @@
   player.addEventListener("error", function () {
     if (state.phase !== "answering") return;
     fragmentFinished = true;
-    syncRecognition();
+    syncVoiceInput();
     updateVoiceStatusText();
   });
 
   // Zolang er geluid speelt luistert de spraakbediening niet mee; dat hier
   // bijwerken zodat het bijschrift altijd klopt (ook na 🔁).
   player.addEventListener("playing", function () {
-    syncRecognition();
+    syncVoiceInput();
     updateVoiceStatusText();
   });
 
@@ -1744,7 +2238,7 @@
     updateScoreOverview();
 
     state.phase = "idle";
-    syncRecognition(); // antwoord binnen: microfoon uit tot na het volgende fragment
+    syncVoiceInput(); // antwoord binnen: microfoon uit tot na het volgende fragment
     state.nextTimer = setTimeout(function () { playNext(session); }, state.pauseMs);
   }
 
@@ -1765,7 +2259,7 @@
     state.running = false;
     setZonesActive(false);
     replayBtn.disabled = true;
-    syncRecognition();
+    syncVoiceInput();
     releaseQuizWakeLock();
     showPendingUpdatePrompt();
   }
@@ -1802,17 +2296,22 @@
     const cached = missingCount === null
       ? "onbekend (cache niet uitleesbaar)"
       : (WORDS.length - missingCount) + " / " + WORDS.length + " (" + missingCount + " ontbreken)";
-    const voiceMode = !SpeechRecognitionCtor
-      ? "niet beschikbaar in deze browser"
-      : (localVoiceReady ? "op het toestel zelf (werkt offline)" : "via internet (de browser stuurt het geluid op)");
+    const modus = voiceMode();
+    const voiceModeLabel =
+      modus === "klank" ? "klankherkenner op jouw eigen opnames (werkt offline)" :
+      modus === "woord" ? "woordherkenner van de browser — " +
+        (localVoiceReady ? "op het toestel zelf (werkt offline)" : "via internet (de browser stuurt het geluid op)") +
+        "; oefen je stem voor de klankherkenner" :
+      "niet beschikbaar in deze browser";
     voiceLogInfo.textContent = voiceLog.length
       ? "Spraaklogboek (nieuwste onderaan):\n" + voiceLog.join("\n")
       : "Spraaklogboek: nog niets opgenomen.";
 
     debugInfo.textContent =
       "Versie: " + (activeVersion || "onbekend") + (waitingWorker ? " (update klaar om te installeren)" : "") + "\n" +
-      "Spraakherkenning: " + voiceMode + "\n" +
-      "Geoefende uitspraken: " + learnedCount() + "\n" +
+      "Spraakbediening: " + voiceModeLabel + "\n" +
+      "Opgenomen klanken: “nee” " + profiles.niet.length + ", “ja” " + profiles.gekend.length + "\n" +
+      "Geoefende uitspraken (woordherkenner): " + learnedCount() + "\n" +
       "Woorden: " + WORDS.length + "\n" +
       "Echt in offline-opslag: " + cached + "\n" +
       "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +
@@ -1831,29 +2330,40 @@
   });
 
   trainVoiceBtn.addEventListener("click", function () {
-    renderLearned();
+    renderVoiceLearning();
     trainPrompt.textContent = "";
     trainHeard.textContent = "";
     trainModal.classList.remove("hidden");
   });
   trainNeeBtn.addEventListener("click", function () { startTraining("niet"); });
   trainJaBtn.addEventListener("click", function () { startTraining("gekend"); });
+  trainTestBtn.addEventListener("click", function () {
+    if (trainTesting) stopTraining("Luistertest gestopt.");
+    else startTest();
+  });
   trainStopBtn.addEventListener("click", function () { stopTraining("Gestopt."); });
   trainCloseBtn.addEventListener("click", function () {
     stopTraining("");
     trainModal.classList.add("hidden");
     // De quiz-microfoon mocht tijdens het oefenen niet aan; nu weer de stand
     // aannemen die bij het moment hoort.
-    syncRecognition();
+    syncVoiceInput();
     updateVoiceStatusText();
   });
   trainResetBtn.addEventListener("click", function () {
-    if (!learnedCount()) return;
-    if (!confirm("Alle " + learnedCount() + " geoefende uitspraken wissen? De ingebouwde ja/nee-herkenning blijft gewoon werken.")) return;
+    const opnames = profiles.gekend.length + profiles.niet.length;
+    if (!opnames && !learnedCount()) return;
+    if (!confirm("Alle " + opnames + " opnames en " + learnedCount() + " aangeleerde uitspraken wissen? " +
+      "De app luistert daarna weer met de woordherkenner van de browser.")) return;
+    stopTraining("");
+    profiles = emptyProfiles();
     learned = { gekend: {}, niet: {} };
     saveState();
-    renderLearned();
+    renderVoiceLearning();
     trainHeard.textContent = "Gewist.";
+    // De manier van luisteren verandert hiermee; meteen in de juiste stand zetten.
+    syncVoiceInput();
+    updateVoiceStatusText();
   });
 
   resetProgressBtn.addEventListener("click", function () {
@@ -1870,7 +2380,8 @@
       exportedAt: new Date().toISOString(),
       lastResults: state.lastResults,
       lastRoundCounts: state.lastRoundCounts,
-      voiceLearned: learned
+      voiceLearned: learned,
+      voiceProfiles: storedProfiles()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -1908,11 +2419,18 @@
       if (!confirm("Dit vervangt je huidige voortgang door de " + count + " woorden uit dit bestand. Doorgaan?")) return;
       state.lastResults = data.lastResults;
       state.lastRoundCounts = data.lastRoundCounts || null;
-      // Geoefende uitspraken alleen overnemen als het bestand ze bevat; een
-      // oudere export zou je oefenwerk anders wissen.
+      // Opnames en geoefende uitspraken alleen overnemen als het bestand ze
+      // bevat; een oudere export zou je oefenwerk anders wissen. Let op: de
+      // opnames zijn van één stem in één auto — een bestand van iemand anders
+      // maakt de herkenning juist slechter.
+      if (data.voiceProfiles) {
+        profiles = loadProfiles(data.voiceProfiles);
+        renderVoiceLearning();
+        syncVoiceInput();
+      }
       if (data.voiceLearned) {
         learned = loadLearned(data.voiceLearned);
-        renderLearned();
+        renderVoiceLearning();
       }
       saveState();
       updateScoreOverview();

@@ -52,6 +52,7 @@
   #controlStrip button:disabled { opacity: .4; cursor: not-allowed; }
   #controlStrip button[hidden] { display: none; }
   #controlStrip button.on { background: #1e8a4c; border-color: #2fb86b; color: #fff; }
+  #controlStrip button.flagged { background: #8a5a1e; border-color: #d4902f; color: #fff; }
   #statusText { flex: 1 1 auto; text-align: center; font-size: .95rem; min-width: 120px; }
 
   #topOverlay {
@@ -146,6 +147,23 @@
     font-size: .82rem; line-height: 1.45; color: #ccc; margin-bottom: .35rem;
   }
 
+  #flagModal p { font-size: .8rem; line-height: 1.45; color: #aaa; margin: 0; }
+  #flagList { margin-top: 1rem; max-height: 45vh; overflow-y: auto; }
+  .flag-row {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .35rem 0; border-bottom: 1px solid #2a2a2a;
+  }
+  .flag-row .flag-id {
+    flex: 1 1 auto; font-size: .85rem; color: #ccc;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .flag-row button {
+    flex: 0 0 auto; background: #333; color: #eee; border: 1px solid #555;
+    border-radius: 6px; padding: .3rem .6rem; font-size: .9rem; cursor: pointer;
+  }
+  .flag-row button:active { background: #444; }
+  .flag-empty { font-size: .85rem; color: #999; line-height: 1.45; }
+
   #updateModal p { font-size: .9rem; line-height: 1.45; color: #ccc; margin: 0; }
   #updateNowBtn {
     background: #1e8a4c; color: #fff; border: 1px solid #2fb86b;
@@ -172,6 +190,7 @@
     <button id="settingsBtn" title="Instellingen">⚙</button>
     <button id="startBtn" disabled>Laden…</button>
     <button id="replayBtn" title="Woord opnieuw afspelen" disabled>🔁</button>
+    <button id="flagBtn" title="Dit fragment klopt niet" disabled>⚑</button>
     <button id="voiceBtn" title="Spraakbediening: antwoord met &quot;ja&quot; of &quot;nee&quot;" hidden>🎤</button>
     <div id="statusText">Woorden worden geladen…</div>
     <button id="installBtn" hidden>📲 Installeer app</button>
@@ -191,6 +210,7 @@
     <button id="exportProgressBtn">Voortgang exporteren naar bestand</button>
     <button id="importProgressBtn">Voortgang importeren uit bestand</button>
     <input id="importProgressInput" type="file" accept="application/json" hidden>
+    <button id="flagListBtn">⚑ Gemarkeerde fragmenten bekijken (0)</button>
     <button id="forceDownloadBtn">Mp3's nu downloaden (forceren, ongeacht wifi-detectie)</button>
     <button id="trainVoiceBtn" hidden>🎤 Stem oefenen (leer de app jouw “ja” en “nee”)</button>
     <button id="aboutBtn">ℹ️ Over deze app (wat is er nieuw)</button>
@@ -223,6 +243,21 @@
   </div>
 </div>
 
+<div id="flagModal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Fragmenten die niet kloppen</h2>
+    <p>Hier staan de fragmenten die je tijdens de quiz met ⚑ gemarkeerd hebt,
+       bijvoorbeeld omdat de spelling of de betekenis niet klopt. Met ▶ luister
+       je er nog eens naar, met ✕ haal je de markering weer weg. De markering
+       staat los van gekend/niet gekend en verdwijnt niet als je je voortgang
+       wist.</p>
+    <div id="flagList"></div>
+    <button id="flagExportBtn">Lijst exporteren naar bestand</button>
+    <button id="flagClearBtn">Alle markeringen wissen</button>
+    <button id="flagCloseBtn">Sluiten</button>
+  </div>
+</div>
+
 <div id="updateModal" class="modal hidden">
   <div class="modal-content">
     <h2>Nieuwe versie beschikbaar</h2>
@@ -239,6 +274,16 @@
     <h2>Over Dieje Lekt</h2>
     <div id="aboutMeta">Laden…</div>
     <div id="aboutChanges">
+      <h3>23 november 2026</h3>
+      <ul>
+        <li>Nieuw: klopt een fragment niet (verkeerde spelling, betekenis of een
+            afgekapte opname), tik dan tijdens de beurt op <b>⚑</b>. Dat telt
+            niet als antwoord — je markeert alleen de opname zelf.</li>
+        <li>Onder ⚙ → <b>Gemarkeerde fragmenten bekijken</b> staat de hele lijst:
+            nog eens beluisteren, markering weghalen, of de lijst exporteren naar
+            een bestand om door te geven.</li>
+      </ul>
+
       <h3>16 oktober 2026</h3>
       <ul>
         <li>Handsfree antwoorden gaat nu op de klánk van je stem in plaats van
@@ -328,6 +373,17 @@
     }
   }
 
+  // Alleen de gemarkeerde woord-id's overhouden, met true als waarde. Een
+  // ouder bestand of een handmatig bewerkt bestand kan hier van alles in
+  // hebben staan; de rest van de app rekent op "id -> true".
+  function loadFlagged(raw) {
+    const out = {};
+    if (raw && typeof raw === "object") {
+      Object.keys(raw).forEach(function (id) { if (raw[id]) out[id] = true; });
+    }
+    return out;
+  }
+
   const stored = loadStored();
 
   const state = {
@@ -335,6 +391,7 @@
     voiceEnabled: stored.voiceEnabled === true,   // handsfree antwoorden met "ja"/"nee"
     lastResults: stored.lastResults || {},        // wordId -> 'gekend' | 'niet'
     lastRoundCounts: stored.lastRoundCounts || null, // { gekend, niet }
+    flagged: loadFlagged(stored.flagged),         // wordId -> true, "dit fragment klopt niet"
     // Hoeveel mp3's er gedownload zijn wordt bewust NIET opgeslagen: dat
     // getal bleek te kunnen afwijken van de werkelijkheid (afgebroken
     // download) en werd dan toch geloofd. Het wordt nu elke keer opnieuw
@@ -357,6 +414,7 @@
       voiceEnabled: state.voiceEnabled,
       lastResults: state.lastResults,
       lastRoundCounts: state.lastRoundCounts,
+      flagged: state.flagged,
       // Zelf aangeleerde uitspraken van "ja"/"nee"; zie de spraaksectie.
       // Wordt pas verderop gevuld, maar saveState() draait nooit eerder.
       voiceLearned: learned,
@@ -373,6 +431,7 @@
   const statusText = document.getElementById("statusText");
   const startBtn = document.getElementById("startBtn");
   const replayBtn = document.getElementById("replayBtn");
+  const flagBtn = document.getElementById("flagBtn");
   const voiceBtn = document.getElementById("voiceBtn");
   const voiceHint = document.getElementById("voiceHint");
   const voiceInfo = document.getElementById("voiceInfo");
@@ -390,6 +449,12 @@
   const importProgressBtn = document.getElementById("importProgressBtn");
   const importProgressInput = document.getElementById("importProgressInput");
   const forceDownloadBtn = document.getElementById("forceDownloadBtn");
+  const flagListBtn = document.getElementById("flagListBtn");
+  const flagModal = document.getElementById("flagModal");
+  const flagList = document.getElementById("flagList");
+  const flagExportBtn = document.getElementById("flagExportBtn");
+  const flagClearBtn = document.getElementById("flagClearBtn");
+  const flagCloseBtn = document.getElementById("flagCloseBtn");
   const trainVoiceBtn = document.getElementById("trainVoiceBtn");
   const aboutBtn = document.getElementById("aboutBtn");
   const aboutModal = document.getElementById("aboutModal");
@@ -2189,6 +2254,7 @@
     startBtn.textContent = "Start quiz";
     settingsBtn.disabled = false;
     replayBtn.disabled = true;
+    updateFlagBtn();
     setZonesActive(false);
     syncVoiceInput();
     updateVoiceStatusText();
@@ -2282,6 +2348,7 @@
     updateVoiceStatusText(); // "Gehoord: ja" van het vorige woord weghalen
     setZonesActive(true);
     replayBtn.disabled = false;
+    updateFlagBtn(); // ⚑ hoort nu bij dit nieuwe woord
     statusText.textContent = voiceActive
       ? "Zeg “ja” of “nee” na het fragment — tikken mag meteen."
       : "Kies zodra je het weet — hoeft niet te wachten tot het einde.";
@@ -2349,10 +2416,169 @@
     state.running = false;
     setZonesActive(false);
     replayBtn.disabled = true;
+    updateFlagBtn();
     syncVoiceInput();
     releaseQuizWakeLock();
     showPendingUpdatePrompt();
   }
+
+  // ---------------------------------------------------------------------
+  // Markeren: "dit fragment klopt niet"
+  // ---------------------------------------------------------------------
+  // Hoor je bij een woord dat er iets niet deugt (verkeerde spelling, een
+  // betekenis die niet klopt, een half afgekapte opname), dan markeer je dat
+  // met ⚑ zonder de beurt te onderbreken. De markering hoort bij het woord
+  // dat op dat moment aan de beurt is en staat helemaal los van gekend/niet
+  // gekend: je antwoord telt gewoon mee en de markering overleeft het wissen
+  // van je voortgang — het gaat over de opname, niet over jouw score.
+  // Onder ⚙ staat de verzamelde lijst, met de id's van de mp3-bestanden erbij,
+  // zodat ze later aangepast kunnen worden.
+  function flaggedIds() {
+    return Object.keys(state.flagged).filter(function (id) { return state.flagged[id]; });
+  }
+
+  function flaggedCount() { return flaggedIds().length; }
+
+  function wordById(id) {
+    for (let i = 0; i < WORDS.length; i++) {
+      if (WORDS[i].id === id) return WORDS[i];
+    }
+    return null;
+  }
+
+  // De knop hoort bij het woord dat nú aan de beurt is. Blijft ook na een
+  // antwoord nog bruikbaar: pas tijdens de pauze erna heb je de betekenis
+  // helemaal gehoord, en dan wil je het alsnog kunnen markeren.
+  function updateFlagBtn() {
+    const word = state.currentWord;
+    const gemarkeerd = !!(word && state.flagged[word.id]);
+    flagBtn.disabled = !(state.running && word);
+    flagBtn.classList.toggle("flagged", gemarkeerd);
+    flagBtn.title = gemarkeerd
+      ? "Markering weghalen — je vond dit fragment niet kloppen"
+      : "Dit fragment klopt niet (spelling, betekenis of opname)";
+  }
+
+  function updateFlagListButton() {
+    flagListBtn.textContent = "⚑ Gemarkeerde fragmenten bekijken (" + flaggedCount() + ")";
+  }
+
+  function toggleFlag() {
+    const word = state.currentWord;
+    if (!state.running || !word) return;
+    if (state.flagged[word.id]) {
+      delete state.flagged[word.id];
+      statusText.textContent = "Markering weggehaald.";
+    } else {
+      state.flagged[word.id] = true;
+      statusText.textContent = "Gemarkeerd als “klopt niet” — je antwoord telt gewoon mee.";
+    }
+    saveState();
+    updateFlagBtn();
+    updateFlagListButton();
+  }
+
+  function unflag(id) {
+    delete state.flagged[id];
+    saveState();
+    renderFlagList();
+    updateFlagListButton();
+    updateFlagBtn();
+  }
+
+  // Afspelen vanuit de lijst gaat langs dezelfde weg als in de quiz (eerst de
+  // offline-opslag), maar raakt de beurt niet: ⚙ is alleen te openen als er
+  // geen beurt loopt, en de "ended"/"error"-handlers van de speler doen buiten
+  // een beurt niets.
+  function playFlagged(id) {
+    const word = wordById(id);
+    if (!word) return;
+    player.pause();
+    resolvePlayableSrc(word.file).then(function (src) {
+      releaseBlobUrl();
+      if (src.indexOf("blob:") === 0) currentBlobUrl = src;
+      player.src = src;
+      player.play().catch(function () {});
+    });
+  }
+
+  function renderFlagList() {
+    const ids = flaggedIds();
+    flagList.textContent = "";
+    flagExportBtn.disabled = !ids.length;
+    flagClearBtn.disabled = !ids.length;
+    if (!ids.length) {
+      const leeg = document.createElement("div");
+      leeg.className = "flag-empty";
+      leeg.textContent = "Nog niets gemarkeerd. Tik tijdens de quiz op ⚑ zodra een fragment niet klopt.";
+      flagList.appendChild(leeg);
+      return;
+    }
+    ids.forEach(function (id) {
+      const row = document.createElement("div");
+      row.className = "flag-row";
+
+      const play = document.createElement("button");
+      play.textContent = "▶";
+      play.title = "Fragment afspelen";
+      play.addEventListener("click", function () { playFlagged(id); });
+
+      const label = document.createElement("span");
+      label.className = "flag-id";
+      label.textContent = id;
+
+      const remove = document.createElement("button");
+      remove.textContent = "✕";
+      remove.title = "Markering weghalen";
+      remove.addEventListener("click", function () { unflag(id); });
+
+      row.appendChild(play);
+      row.appendChild(label);
+      row.appendChild(remove);
+      flagList.appendChild(row);
+    });
+  }
+
+  flagBtn.addEventListener("click", toggleFlag);
+
+  flagListBtn.addEventListener("click", function () {
+    renderFlagList();
+    flagModal.classList.remove("hidden");
+  });
+
+  flagCloseBtn.addEventListener("click", function () {
+    player.pause();
+    flagModal.classList.add("hidden");
+  });
+
+  // Een los tekstbestand met de id's, om door te geven aan wie de fragmenten
+  // beheert. De markeringen zitten daarnaast ook gewoon in de export van je
+  // voortgang, zodat ze meegaan naar een ander toestel.
+  flagExportBtn.addEventListener("click", function () {
+    const ids = flaggedIds();
+    if (!ids.length) return;
+    const regels = ["Fragmenten die volgens de gebruiker niet kloppen: " + ids.length];
+    regels.push("Geëxporteerd: " + new Date().toLocaleString("nl-NL"));
+    regels.push("");
+    ids.forEach(function (id) {
+      const word = wordById(id);
+      regels.push(id + (word ? "\t" + word.file : "\t(niet meer in de woordenlijst)"));
+    });
+    downloadBlob(new Blob([regels.join("\r\n")], { type: "text/plain" }), "dieje-lekt-klopt-niet.txt");
+  });
+
+  flagClearBtn.addEventListener("click", function () {
+    const aantal = flaggedCount();
+    if (!aantal) return;
+    if (!confirm("Alle " + aantal + " markeringen wissen?")) return;
+    state.flagged = {};
+    saveState();
+    renderFlagList();
+    updateFlagListButton();
+    updateFlagBtn();
+  });
+
+  updateFlagListButton();
 
   // ---------------------------------------------------------------------
   // Events
@@ -2403,6 +2629,7 @@
       "Opgenomen klanken: “nee” " + profiles.niet.length + ", “ja” " + profiles.gekend.length + "\n" +
       "Geoefende uitspraken (woordherkenner): " + learnedCount() + "\n" +
       "Woorden: " + WORDS.length + "\n" +
+      "Gemarkeerd als “klopt niet”: " + flaggedCount() + "\n" +
       "Echt in offline-opslag: " + cached + "\n" +
       "Gedetecteerde verbinding: " + statusLabel + " (connection.type: " + (conn && conn.type ? conn.type : "niet beschikbaar") + ")\n" +
       "Service worker actief: " + (navigator.serviceWorker && navigator.serviceWorker.controller ? "ja" : "nee");
@@ -2410,6 +2637,7 @@
 
   settingsBtn.addEventListener("click", function () {
     askActiveVersion();
+    updateFlagListButton();
     updateDebugInfo();
     settingsModal.classList.remove("hidden");
     // Hertellen kost even; zodra het klaar is staat het juiste aantal er.
@@ -2482,24 +2710,32 @@
     settingsModal.classList.add("hidden");
   });
 
+  // Een bestand aanbieden om op te slaan. Via een tijdelijke link, want een
+  // telefoonbrowser kent geen "opslaan als"-venster dat we zelf kunnen openen.
+  function downloadBlob(blob, naam) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = naam;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   exportProgressBtn.addEventListener("click", function () {
     const data = {
       type: "bergs-quiz-voortgang",
       exportedAt: new Date().toISOString(),
       lastResults: state.lastResults,
       lastRoundCounts: state.lastRoundCounts,
+      flagged: state.flagged,
       voiceLearned: learned,
       voiceProfiles: storedProfiles()
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "dieje-lekt-voortgang.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(
+      new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      "dieje-lekt-voortgang.json");
   });
 
   importProgressBtn.addEventListener("click", function () {
@@ -2527,6 +2763,13 @@
       if (!confirm("Dit vervangt je huidige voortgang door de " + count + " woorden uit dit bestand. Doorgaan?")) return;
       state.lastResults = data.lastResults;
       state.lastRoundCounts = data.lastRoundCounts || null;
+      // Markeringen alleen overnemen als het bestand ze heeft; een oudere
+      // export zou ze anders wissen.
+      if (data.flagged) {
+        state.flagged = loadFlagged(data.flagged);
+        updateFlagListButton();
+        updateFlagBtn();
+      }
       // Opnames en geoefende uitspraken alleen overnemen als het bestand ze
       // bevat; een oudere export zou je oefenwerk anders wissen. Let op: de
       // opnames zijn van één stem in één auto — een bestand van iemand anders

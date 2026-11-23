@@ -12,7 +12,22 @@ Hoe het werkt
 2. Je hoeft niet te wachten tot het einde: zodra je het weet, tik je meteen
    rood (NIET GEKEND) of groen (GEKEND). Het fragment stopt dan direct.
 3. 🔁 speelt het huidige fragment nog eens af, ook tijdens het afspelen.
-4. 🎤 zet spraakbediening aan (handsfree, bedoeld voor in de auto): in
+4. ⚑ markeert het fragment dat op dat moment aan de beurt is als "klopt
+   niet" — verkeerde spelling, een betekenis die niet klopt, of een
+   afgekapte opname. Dat is geen antwoord: je kunt gewoon rood/groen
+   blijven tikken, en de markering telt niet mee in de score. Nog een keer
+   tikken haalt hem weer weg. De knop blijft tijdens de pauze na je
+   antwoord nog bruikbaar, want pas dán heb je de betekenis helemaal
+   gehoord.
+   - Onder ⚙ → "Gemarkeerde fragmenten bekijken" staat de verzamelde
+     lijst: per fragment nog eens beluisteren (▶), de markering weghalen
+     (✕), alles in één keer wissen, of de lijst exporteren naar een
+     tekstbestand (id + mp3-bestandsnaam) om door te geven aan wie de
+     opnames beheert.
+   - Markeringen staan los van je voortgang: "Voortgang wissen" laat ze
+     staan, want ze gaan over de opname en niet over jouw score. Ze gaan
+     wél mee in het export/import-bestand van je voortgang.
+5. 🎤 zet spraakbediening aan (handsfree, bedoeld voor in de auto): in
    plaats van tikken zeg je "ja" (gekend) of "nee" (niet gekend). Tikken
    blijft daarnaast gewoon werken, ook tijdens het fragment.
    - De app luistert niet naar wélk woord je zegt, maar naar hoe het
@@ -72,18 +87,18 @@ Hoe het werkt
      staat welke manier van luisteren actief is en hoeveel opnames er
      zijn, plus een logboek van de laatste 25 gebeurtenissen (mic aan/uit,
      fouten, wat er gehoord is, met hoeveel procent en of het geteld werd).
-5. Staat er een nieuwe versie van de app klaar, dan vraagt hij "Nieuwe
+6. Staat er een nieuwe versie van de app klaar, dan vraagt hij "Nieuwe
    versie beschikbaar — nu bijwerken?". Tik je op "Nu bijwerken", dan
    installeert en herstart hij zichzelf in een paar seconden. Zie
    "Bijwerken" verderop.
-6. Onder ⚙ → "Over deze app" staat wat er in de laatste versies veranderd
+7. Onder ⚙ → "Over deze app" staat wat er in de laatste versies veranderd
    is, met daarboven het aantal fragmenten en de actieve versie. Zo zie je
    na het bijwerken meteen wat je erbij gekregen hebt. De lijst staat als
    gewone tekst in index.html (aboutModal) en wordt met de hand aangevuld
    bij een nieuwe wijziging.
-7. Woorden die je als "niet gekend" markeert komen vaker terug in latere
+8. Woorden die je als "niet gekend" markeert komen vaker terug in latere
    beurten, zodat je vooral herhaalt wat je nog niet kent.
-8. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
+9. Aan het eind van een beurt zie je hoeveel je gekend/niet gekend hebt.
    Je voortgang wordt lokaal bewaard (blijft staan na het sluiten van de app).
 
 Techniek
